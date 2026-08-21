@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: operai-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: OPERAI_DATABASE_URL
+        sync: false
+      - key: OPERAI_JWT_SECRET
+        generateValue: true
+      - key: OPERAI_CORS_ORIGINS
+        sync: false
+      - key: OPERAI_FRONTEND_URL
+        sync: false
+      - key: OPERAI_PUBLIC_API_URL
+        sync: false
+      - key: OPERAI_ASAAS_API_KEY
+        sync: false
+      - key: OPERAI_ASAAS_API_URL
+        value: https://sandbox.asaas.com/api/v3
+      - key: OPERAI_ASAAS_WEBHOOK_TOKEN
+        sync: false
+      - key: OPERAI_TRIAL_DAYS
+        value: "14"
+      - key: OPERAI_ENCRYPTION_KEY
+        sync: false

@@ -1,0 +1,35 @@
+.finance-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 2px;
+  border-bottom: 1px solid #edf0ef;
+}
+.finance-row small {
+  display: block;
+  color: #84918d;
+  margin-top: 4px;
+}
+.finance-row > button {
+  border: 1px solid #dce2df;
+  background: white;
+  border-radius: 7px;
+  padding: 7px 9px;
+  cursor: pointer;
+}
+.finance-status {
+  font-size: 10px;
+  text-transform: uppercase;
+  padding: 5px 8px;
+  border-radius: 15px;
+  background: #edf0ef;
+}
+.finance-status.overdue {
+  background: #ffebeb;
+  color: #ad3c3c;
+}
+.finance-status.paid {
+  background: #e4f6ed;
+  color: #217a58;
+}

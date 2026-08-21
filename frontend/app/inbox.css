@@ -1,0 +1,42 @@
+.hidden {
+  display: none;
+}
+.inbox-thread {
+  display: grid;
+  grid-template-columns: 42px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 2px;
+  border-bottom: 1px solid #edf0ef;
+}
+.inbox-thread small {
+  display: block;
+  color: #84918d;
+  margin-top: 4px;
+}
+.inbox-thread > span {
+  background: #0f6b63;
+  color: #fff;
+  border-radius: 50%;
+  min-width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+}
+.secret-box {
+  margin-top: 18px;
+  padding: 14px;
+  border-radius: 10px;
+  background: #fff8e7;
+  border: 1px solid #efdfb6;
+  display: grid;
+  gap: 8px;
+}
+.secret-box code {
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+.secret-box small {
+  color: #856d34;
+}

@@ -1,0 +1,30 @@
+.team-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 2px;
+  border-bottom: 1px solid #edf0ef;
+}
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #e5f3f1;
+  color: #0f6b63;
+  font-weight: 800;
+}
+.team-row small {
+  display: block;
+  color: #84918d;
+  margin-top: 3px;
+}
+.team-row > button {
+  border: 1px solid #dce2df;
+  background: white;
+  border-radius: 7px;
+  padding: 7px 9px;
+  cursor: pointer;
+}
