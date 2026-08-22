@@ -1,16 +1,57 @@
 from functools import lru_cache
 import json
 from typing import Annotated
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from pydantic import BeforeValidator, Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 def normalize_database_url(url: str) -> str:
-    """Neon/Supabase give postgresql://; SQLAlchemy async needs +asyncpg."""
+    """Neon/Supabase → asyncpg-compatible SQLAlchemy URL."""
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://") :]
     if url.startswith("postgresql://") and "+asyncpg" not in url:
         url = "postgresql+asyncpg://" + url[len("postgresql://") :]
-    return url
+
+    parts = urlsplit(url)
+    query: list[tuple[str, str]] = []
+    has_ssl = False
+    for key, value in parse_qsl(parts.query, keep_blank_values=True):
+        lowered = key.lower()
+        # asyncpg rejects libpq sslmode= and Neon channel_binding=
+        if lowered == "channel_binding":
+            continue
+        if lowered == "sslmode":
+            query.append(("ssl", "require"))
+            has_ssl = True
+            continue
+        if lowered == "ssl":
+            has_ssl = True
+            query.append((key, value if value else "require"))
+            continue
+        query.append((key, value))
+
+    # Neon requires TLS; ensure ssl is present for remote hosts
+    host = (parts.hostname or "").lower()
+    if not has_ssl and host and host not in {"localhost", "127.0.0.1"}:
+        query.append(("ssl", "require"))
+
+    return urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+    )
+
+def sync_database_url(url: str) -> str:
+    """Alembic/psycopg2 URL (no +asyncpg; sslmode instead of ssl)."""
+    url = url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    parts = urlsplit(url)
+    query: list[tuple[str, str]] = []
+    for key, value in parse_qsl(parts.query, keep_blank_values=True):
+        if key.lower() == "ssl":
+            query.append(("sslmode", "require"))
+        else:
+            query.append((key, value))
+    return urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+    )
 
 def parse_cors_origins(value: object) -> list[str]:
     if value is None:

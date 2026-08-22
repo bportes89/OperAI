@@ -108,6 +108,11 @@ async def _org_llm_answer(org_id:uuid.UUID,agent:Agent,question:str,sources:list
 @router.get("/health")
 async def health():return {"status":"ok","service":"operai-api"}
 
+@router.get("/health/db")
+async def health_db(db:Db):
+    await db.execute(select(1))
+    return {"status":"ok","database":"up"}
+
 @router.post("/auth/register",response_model=TokenPair,status_code=201)
 async def register(data:RegisterIn,db:Db):
     if await db.scalar(select(User).where(User.email==data.email)):raise HTTPException(409,"Email already registered")

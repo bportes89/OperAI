@@ -1,11 +1,11 @@
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from app.core.config import get_settings
+from app.core.config import get_settings, sync_database_url
 from app.models import Base
 
 config = context.config
-config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("+asyncpg", ""))
+config.set_main_option("sqlalchemy.url", sync_database_url(get_settings().database_url))
 
 target_metadata = Base.metadata
 

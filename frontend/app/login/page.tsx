@@ -23,9 +23,13 @@ export default function LoginPage() {
       });
       router.replace("/app");
     } catch (e) {
-      setError(
-        e instanceof ApiError ? e.message : "Falha ao entrar. Tente novamente.",
-      );
+      const message =
+        e instanceof ApiError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : "Falha ao entrar. Tente novamente.";
+      setError(message);
     } finally {
       setBusy(false);
     }

@@ -1,4 +1,7 @@
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8001";
+const API = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8001").replace(
+  /\/$/,
+  "",
+);
 export const SESSION_KEY = "operai_session";
 
 export type Tokens = {
@@ -66,7 +69,15 @@ export async function api(
     headers.set("Authorization", `Bearer ${tokens.access_token}`);
   }
 
-  let response = await fetch(`${API}${path}`, { ...init, headers });
+  let response: Response;
+  try {
+    response = await fetch(`${API}${path}`, { ...init, headers });
+  } catch {
+    throw new ApiError(
+      "Não foi possível conectar à API. Verifique se o backend está online.",
+      0,
+    );
+  }
 
   if (response.status === 401 && tokens?.refresh_token) {
     const refreshed = await fetch(`${API}/api/v1/auth/refresh`, {
