@@ -1,7 +1,8 @@
 from functools import lru_cache
 import json
-from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Annotated
+from pydantic import BeforeValidator, Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 def normalize_database_url(url: str) -> str:
     """Neon/Supabase give postgresql://; SQLAlchemy async needs +asyncpg."""
@@ -34,7 +35,10 @@ class Settings(BaseSettings):
     jwt_secret: str = Field("development-secret-change-this-now", min_length=32)
     access_token_minutes: int = 30
     refresh_token_days: int = 30
-    cors_origins: list[str] = ["http://localhost:3000"]
+    # NoDecode: Render often sets a plain URL or empty string; skip JSON env decode.
+    cors_origins: Annotated[list[str], NoDecode, BeforeValidator(parse_cors_origins)] = [
+        "http://localhost:3000"
+    ]
     asaas_api_key: str = ""
     asaas_api_url: str = "https://sandbox.asaas.com/api/v3"
     asaas_webhook_token: str = "dev-asaas-webhook"
@@ -49,11 +53,6 @@ class Settings(BaseSettings):
     @classmethod
     def _db_url(cls, value: str) -> str:
         return normalize_database_url(str(value))
-
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def _cors(cls, value: object) -> list[str]:
-        return parse_cors_origins(value)
 
 @lru_cache
 def get_settings() -> Settings:
