@@ -1,4 +1,5 @@
 from functools import lru_cache
+import json
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -9,6 +10,23 @@ def normalize_database_url(url: str) -> str:
     if url.startswith("postgresql://") and "+asyncpg" not in url:
         url = "postgresql+asyncpg://" + url[len("postgresql://") :]
     return url
+
+def parse_cors_origins(value: object) -> list[str]:
+    if value is None:
+        return ["http://localhost:3000"]
+    if isinstance(value, list):
+        return [str(item).strip().rstrip("/") for item in value if str(item).strip()]
+    text = str(value).strip()
+    if not text:
+        return ["http://localhost:3000"]
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return [str(item).strip().rstrip("/") for item in parsed if str(item).strip()]
+        except json.JSONDecodeError:
+            pass
+    return [part.strip().rstrip("/") for part in text.split(",") if part.strip()]
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="OPERAI_", extra="ignore")
@@ -31,6 +49,11 @@ class Settings(BaseSettings):
     @classmethod
     def _db_url(cls, value: str) -> str:
         return normalize_database_url(str(value))
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _cors(cls, value: object) -> list[str]:
+        return parse_cors_origins(value)
 
 @lru_cache
 def get_settings() -> Settings:
