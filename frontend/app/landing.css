@@ -213,27 +213,6 @@
   flex-wrap: wrap;
 }
 
-@keyframes drift {
-  from {
-    transform: translateY(0) rotate(0deg);
-  }
-  to {
-    transform: translateY(18px) rotate(4deg);
-  }
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 0.55;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.9;
-    transform: scale(1.08);
-  }
-}
-
 @media (max-width: 900px) {
   .pricing-grid {
     grid-template-columns: 1fr;
