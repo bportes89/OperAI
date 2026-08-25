@@ -33,19 +33,21 @@ async def chat(
     system: str,
     user: str,
     temperature: float = 0.3,
+    history: list[dict[str, str]] | None = None,
 ) -> str:
     base = PROVIDERS.get(provider.lower())
     if not base:
         raise ValueError(f"Unsupported LLM provider: {provider}")
     if not api_key.strip():
         raise ValueError("LLM API key is required")
+    messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+    if history:
+        messages.extend(history[-10:])
+    messages.append({"role": "user", "content": user})
     payload = {
         "model": model,
         "temperature": temperature,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
+        "messages": messages,
     }
     headers = {
         "Authorization": f"Bearer {api_key}",

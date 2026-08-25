@@ -86,7 +86,7 @@ def _parse_evolution_inbound(payload:dict)->dict|None:
     if from_me is True:return None
     return {"external_message_id":str(msg_id),"phone":phone,"contact_name":str(name)[:160],"text":text.strip()[:12000]}
 
-async def _org_llm_answer(org_id:uuid.UUID,agent:Agent,question:str,sources:list[dict],db:AsyncSession)->tuple[str,str]:
+async def _org_llm_answer(org_id:uuid.UUID,agent:Agent,question:str,sources:list[dict],db:AsyncSession,history:list[dict[str,str]]|None=None)->tuple[str,str]:
     context="\n\n".join(f"[{x['document']}] {x['content']}" for x in sources[:5])
     type_prompt=llm.AGENT_SYSTEM_PROMPTS.get(agent.agent_type,"Você é um agente OperAI profissional.")
     system="\n\n".join([
@@ -99,7 +99,7 @@ async def _org_llm_answer(org_id:uuid.UUID,agent:Agent,question:str,sources:list
         local=f"Com base nos documentos recuperados para '{question}':\n\n{context}" if sources else "Não encontrei informações na base de conhecimento desta empresa."
         return f"{local}\n\nConfigure BYOK em Configurações > LLM para respostas com modelo externo.","local-rag"
     try:
-        answer=await llm.chat(cred.provider,decrypt_secret(cred.api_key_encrypted),cred.model_name or agent.model,system,question)
+        answer=await llm.chat(cred.provider,decrypt_secret(cred.api_key_encrypted).strip(),cred.model_name or agent.model,system,question,history=history)
         return answer,"byok"
     except Exception as exc:
         local=f"Com base nos documentos recuperados para '{question}':\n\n{context}" if sources else "Não encontrei informações na base de conhecimento desta empresa."
@@ -342,12 +342,14 @@ async def query_agent(agent_id:str,data:AgentQueryIn,p:Annotated[Principal,Depen
     if agent.status!="active":raise HTTPException(409,"Agent must be active")
     rows=(await db.execute(select(KnowledgeChunk,KnowledgeDocument.title).join(KnowledgeDocument,KnowledgeDocument.id==KnowledgeChunk.document_id).where(KnowledgeChunk.organization_id==p.organization_id))).all()
     sources=retrieve(data.question,list(rows),data.top_k)
-    answer,mode=await _org_llm_answer(p.organization_id,agent,data.question,sources,db)
     if data.conversation_id:
         conversation=await db.scalar(select(Conversation).where(and_(Conversation.id==parse_uuid(data.conversation_id,"Conversation"),Conversation.agent_id==agent.id,Conversation.organization_id==p.organization_id)))
         if not conversation:raise HTTPException(404,"Conversation not found")
     else:
         conversation=Conversation(organization_id=p.organization_id,agent_id=agent.id,user_id=p.user_id,title=data.question[:180]);db.add(conversation);await db.flush()
+    prior=(await db.scalars(select(ConversationMessage).where(ConversationMessage.conversation_id==conversation.id).order_by(ConversationMessage.created_at))).all()
+    history=[{"role":m.role,"content":m.content} for m in prior[-10:] if m.role in {"user","assistant"}]
+    answer,mode=await _org_llm_answer(p.organization_id,agent,data.question,sources,db,history)
     conversation.updated_at=datetime.now(UTC)
     db.add_all([
         ConversationMessage(organization_id=p.organization_id,conversation_id=conversation.id,role="user",content=data.question),
