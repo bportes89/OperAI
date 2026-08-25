@@ -96,7 +96,7 @@ export default function OnboardingPage() {
           body: JSON.stringify({
             step: allDone ? "done" : key,
             checklist: nextChecklist,
-            completed_at: allDone ? new Date().toISOString() : null,
+            completed: allDone,
           }),
         },
       );
