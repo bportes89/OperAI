@@ -45,7 +45,7 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
   align-items: center;
   gap: clamp(28px, 4vw, 56px);
-  padding: 40px 0 80px clamp(20px, 5vw, 72px);
+  padding: 40px clamp(20px, 5vw, 72px) 80px;
   overflow: hidden;
 }
 
@@ -66,20 +66,20 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  min-width: 0;
 }
 
 .product-stage {
-  width: min(100%, 620px);
-  margin-right: 0;
-  transform: translateX(8%);
+  width: 100%;
+  max-width: 620px;
   display: grid;
-  grid-template-columns: 148px 1fr;
+  grid-template-columns: 148px minmax(0, 1fr);
   min-height: 390px;
   background: #0b1c24;
   color: #e8f0ee;
-  border-radius: 28px 0 0 28px;
+  border-radius: 28px;
   overflow: hidden;
-  box-shadow: -24px 28px 60px #0b1c2422;
+  box-shadow: 0 28px 60px #0b1c2422;
   animation: stage-in 0.9s ease both;
 }
 
