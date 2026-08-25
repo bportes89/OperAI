@@ -2,9 +2,9 @@
   min-height: 100vh;
   color: var(--ink);
   background:
-    radial-gradient(ellipse 80% 50% at 10% -10%, #d7ebe7 0%, transparent 55%),
-    radial-gradient(ellipse 60% 40% at 100% 0%, #f0dfc8 0%, transparent 50%),
-    linear-gradient(180deg, #f7f4ee 0%, #efeae1 100%);
+    linear-gradient(115deg, #e8f2f0 0%, transparent 42%),
+    linear-gradient(200deg, #f3ebe0 0%, transparent 38%),
+    linear-gradient(180deg, #f7f4ee 0%, #ebe6dc 100%);
 }
 
 .landing-nav {
@@ -50,32 +50,21 @@
 .landing-hero::before {
   content: "";
   position: absolute;
-  inset: 8% -10% auto 35%;
-  height: 70%;
-  background:
-    linear-gradient(135deg, #0f6b6388, #0b1c2488),
-    repeating-linear-gradient(
-      -18deg,
-      transparent 0 14px,
-      #ffffff0d 14px 15px
-    );
-  border-radius: 40% 28% 48% 32%;
-  filter: blur(2px);
+  inset: 0;
   z-index: 0;
-  animation: drift 18s ease-in-out infinite alternate;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      105deg,
+      transparent 0%,
+      transparent 48%,
+      #0f6b6312 72%,
+      #0b1c2410 100%
+    );
 }
 
 .landing-hero::after {
-  content: "";
-  position: absolute;
-  width: 280px;
-  height: 280px;
-  right: 8%;
-  bottom: 12%;
-  border-radius: 50%;
-  background: radial-gradient(circle, #c9783a55, transparent 70%);
-  z-index: 0;
-  animation: pulse 8s ease-in-out infinite;
+  content: none;
 }
 
 .hero-copy {
@@ -257,8 +246,6 @@
   }
 
   .landing-hero::before {
-    inset: auto -20% 10% 20%;
-    height: 45%;
-    opacity: 0.55;
+    background: linear-gradient(180deg, transparent 55%, #0f6b630d 100%);
   }
 }
