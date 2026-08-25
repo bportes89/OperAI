@@ -72,6 +72,47 @@ export default function LandingPage() {
             </Link>
           </div>
         </div>
+
+        <div className="hero-visual" aria-hidden="true">
+          <div className="product-stage">
+            <aside className="product-rail">
+              <p className="product-rail-label">Agentes</p>
+              <ul>
+                <li className="active">
+                  <span>WA</span> Atendimento
+                </li>
+                <li>
+                  <span>CO</span> Cobrança
+                </li>
+                <li>
+                  <span>VE</span> Comercial
+                </li>
+              </ul>
+            </aside>
+            <div className="product-thread">
+              <header>
+                <strong>WhatsApp · Ana Silva</strong>
+                <em>agente online</em>
+              </header>
+              <div className="product-msgs">
+                <p className="msg in">
+                  Vocês fazem instalação em Campinas? Qual o prazo?
+                </p>
+                <p className="msg out reveal">
+                  Sim — região de Campinas com prazo padrão de 3 dias úteis,
+                  conforme a política comercial.
+                </p>
+                <p className="msg meta reveal-late">
+                  Resposta com base na base de conhecimento
+                </p>
+              </div>
+              <footer>
+                <span>Digite uma mensagem…</span>
+                <b>Enviar</b>
+              </footer>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section className="landing-section" id="precos">
