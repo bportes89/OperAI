@@ -249,10 +249,12 @@ export default function AgentsPage() {
             </label>
             <label>
               Modelo
-              <select name="model" defaultValue="gpt-4o-mini">
-                <option value="gpt-4o-mini">GPT-4o mini</option>
-                <option value="gpt-4o">GPT-4o</option>
-                <option value="llama-3.3-70b-versatile">Llama 3.3 70B</option>
+              <select name="model" defaultValue="openai/gpt-oss-120b">
+                <option value="openai/gpt-oss-120b">GPT-OSS 120B (Groq)</option>
+                <option value="openai/gpt-oss-20b">GPT-OSS 20B (Groq)</option>
+                <option value="qwen/qwen3.6-27b">Qwen 3.6 27B (Groq)</option>
+                <option value="gpt-4o-mini">GPT-4o mini (OpenAI)</option>
+                <option value="gpt-4o">GPT-4o (OpenAI)</option>
               </select>
             </label>
             <label>
