@@ -506,10 +506,19 @@ async def queue_outgoing_message(thread_id:str,data:OutgoingMessageIn,p:Annotate
     await require_billing_access(p.organization_id,db)
     thread=await db.scalar(select(InboxThread).where(and_(InboxThread.id==parse_uuid(thread_id,"Thread"),InboxThread.organization_id==p.organization_id)))
     if not thread:raise HTTPException(404,"Thread not found")
-    item=ChannelMessage(organization_id=p.organization_id,channel_id=thread.channel_id,thread_id=thread.id,external_message_id=f"queued_{secrets.token_hex(12)}",direction="outbound",content=data.text,status="queued")
+    channel=await db.scalar(select(Channel).where(Channel.id==thread.channel_id))
+    contact=await db.scalar(select(Contact).where(Contact.id==thread.contact_id))
+    status="queued";error=None
+    if channel and contact and channel.active and channel.provider=="evolution" and channel.instance_name:
+        try:
+            await evolution.send_text(channel.instance_name,contact.phone,data.text)
+            status="sent"
+        except Exception as exc:
+            status="failed";error=str(exc)[:300]
+    item=ChannelMessage(organization_id=p.organization_id,channel_id=thread.channel_id,thread_id=thread.id,external_message_id=f"queued_{secrets.token_hex(12)}",direction="outbound",content=data.text,status=status)
     thread.last_message_at=datetime.now(UTC)
-    db.add_all([item,AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="message.queued",resource="inbox_thread",detail=str(thread.id))])
-    await db.commit();await db.refresh(item);return {"id":str(item.id),"status":item.status}
+    db.add_all([item,AuditLog(organization_id=p.organization_id,user_id=p.user_id,action=f"message.{status}",resource="inbox_thread",detail=str(thread.id))])
+    await db.commit();await db.refresh(item);return {"id":str(item.id),"status":item.status,"error":error}
 
 @router.get("/finance/receivables")
 async def receivables(p:Annotated[Principal,Depends(current_principal)],db:Db):
