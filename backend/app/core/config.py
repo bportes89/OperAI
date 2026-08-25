@@ -87,6 +87,7 @@ class Settings(BaseSettings):
     encryption_key: str = ""
     evolution_api_url: str = "http://127.0.0.1:8080"
     evolution_api_key: str = ""
+    evolution_webhook_token: str = ""
     public_api_url: str = "http://127.0.0.1:8001"
     frontend_url: str = "http://localhost:3000"
 

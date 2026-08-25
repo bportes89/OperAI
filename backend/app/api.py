@@ -430,7 +430,9 @@ async def evolution_status(channel_id:str,p:Annotated[Principal,Depends(current_
     return {"id":str(item.id),"instance_name":item.instance_name,"status":state,"active":item.active}
 
 @router.post("/webhooks/evolution/{channel_key}",status_code=202)
-async def evolution_webhook(channel_key:str,request:Request,db:Db):
+async def evolution_webhook(channel_key:str,request:Request,db:Db,x_evolution_token:Annotated[str|None,Header()]=None):
+    expected=get_settings().evolution_webhook_token.strip()
+    if not expected or not x_evolution_token or not hmac.compare_digest(x_evolution_token.strip(),expected):raise HTTPException(401,"Invalid webhook token")
     channel=await db.scalar(select(Channel).where(and_(Channel.external_key==channel_key,Channel.active.is_(True),Channel.provider=="evolution")))
     if not channel:raise HTTPException(404,"Channel not found")
     payload=await request.json()
