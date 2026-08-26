@@ -406,6 +406,8 @@ async def evolution_connect(data:EvolutionConnectIn,p:Annotated[Principal,Depend
     )
     db.add(item);await db.commit();await db.refresh(item)
     qr=created.get("qrcode") if isinstance(created.get("qrcode"),dict) else {}
+    qrcode_b64=qr.get("base64") or created.get("base64")
+    pairing=qr.get("code") or created.get("pairingCode") or created.get("code")
     state=await evolution.connection_state(instance)
     instance_payload=state.get("instance") if isinstance(state.get("instance"),dict) else {}
     status_value=state.get("state") or instance_payload.get("state")
@@ -416,8 +418,8 @@ async def evolution_connect(data:EvolutionConnectIn,p:Annotated[Principal,Depend
         "provider":item.provider,
         "instance_name":item.instance_name,
         "qr":qr,
-        "qrcode":qr.get("base64"),
-        "pairing_code":qr.get("code"),
+        "qrcode":qrcode_b64,
+        "pairing_code":pairing,
         "status":status_value,
         "mode":created.get("mode","evolution"),
         "webhook_url":f"{get_settings().public_api_url.rstrip('/')}/api/v1/webhooks/evolution/{item.external_key}",
@@ -430,14 +432,16 @@ async def evolution_qr(channel_id:str,p:Annotated[Principal,Depends(current_prin
     if item.provider!="evolution" or not item.instance_name:raise HTTPException(409,"Channel is not an Evolution instance")
     data=await evolution.get_qrcode(item.instance_name)
     qr=data.get("qrcode") if isinstance(data.get("qrcode"),dict) else {}
+    qrcode_b64=qr.get("base64") or data.get("base64")
+    pairing=qr.get("code") or data.get("pairingCode") or data.get("code")
     state=await evolution.connection_state(item.instance_name)
     instance_payload=state.get("instance") if isinstance(state.get("instance"),dict) else {}
     status_value=state.get("state") or instance_payload.get("state")
     return {
         "id":str(item.id),
         "instance_name":item.instance_name,
-        "qrcode":qr.get("base64"),
-        "pairing_code":qr.get("code"),
+        "qrcode":qrcode_b64,
+        "pairing_code":pairing,
         "status":status_value,
     }
 
