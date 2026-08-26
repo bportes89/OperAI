@@ -214,7 +214,25 @@ export default function InboxPage() {
                   <div className="activity-row" key={msg.id}>
                     <div className="activity-dot" />
                     <div>
-                      <strong>{msg.direction}</strong>
+                      <strong>
+                        {msg.direction === "inbound" ? "Recebida" : "Enviada"}
+                      </strong>
+                      {msg.status === "failed" && (
+                        <span
+                          style={{
+                            color: "#c0392b",
+                            marginLeft: 8,
+                            fontWeight: 600,
+                          }}
+                        >
+                          falhou ao enviar
+                        </span>
+                      )}
+                      {msg.status === "queued" && (
+                        <span style={{ color: "#8a9692", marginLeft: 8 }}>
+                          na fila
+                        </span>
+                      )}
                       <small>{msg.content}</small>
                     </div>
                     <time>{formatDateTime(msg.created_at)}</time>
