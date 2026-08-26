@@ -12,6 +12,8 @@ export default function InboxPage() {
   const [messages, setMessages] = useState<InboxMessage[]>([]);
   const [channelSecret, setChannelSecret] = useState("");
   const [evolutionInfo, setEvolutionInfo] = useState("");
+  const [qrImage, setQrImage] = useState<string | null>(null);
+  const [qrInfo, setQrInfo] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -66,7 +68,8 @@ export default function InboxPage() {
     try {
       const result = await apiJson<{
         status?: string;
-        qrcode?: string;
+        qrcode?: string | null;
+        pairing_code?: string | null;
         instance_name?: string;
         message?: string;
         id?: string;
@@ -77,12 +80,20 @@ export default function InboxPage() {
           instance_name: data.instance_name,
         }),
       });
-      setEvolutionInfo(
-        result.qrcode
-          ? `Instância ${result.instance_name ?? ""} · escaneie o QR no painel Evolution.`
-          : result.message ||
-              `Canal Evolution conectado (${result.status ?? "ok"}).`,
-      );
+      if (result.qrcode) {
+        setQrImage(result.qrcode);
+        setQrInfo(
+          `Instância ${result.instance_name ?? ""} · escaneie o QR com o WhatsApp da empresa.`,
+        );
+        setEvolutionInfo("");
+      } else {
+        setQrImage(null);
+        setQrInfo("");
+        setEvolutionInfo(
+          result.message ||
+            `Canal Evolution conectado (${result.status ?? "ok"}). Use "Gerar QR" para vincular.`,
+        );
+      }
       try {
         await apiJson("/api/v1/settings/onboarding", {
           method: "PATCH",
@@ -100,6 +111,33 @@ export default function InboxPage() {
       setError((e as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function fetchQr(channel: Channel) {
+    setError("");
+    setQrInfo("");
+    try {
+      const result = await apiJson<{
+        qrcode?: string | null;
+        pairing_code?: string | null;
+        status?: string;
+      }>(`/api/v1/channels/${channel.id}/evolution/qr`);
+      if (result.qrcode) {
+        setQrImage(result.qrcode);
+        setQrInfo(
+          `Instância ${channel.instance_name ?? channel.name} · escaneie o QR com o WhatsApp da empresa.`,
+        );
+      } else {
+        setQrImage(null);
+        setQrInfo(
+          result.status === "open"
+            ? "Instância já conectada."
+            : `Status: ${result.status ?? "desconhecido"}. Tente novamente em alguns segundos.`,
+        );
+      }
+    } catch (e) {
+      setError((e as Error).message);
     }
   }
 
@@ -154,6 +192,31 @@ export default function InboxPage() {
       </header>
       {error && <p className="error">{error}</p>}
       {evolutionInfo && <p className="success">{evolutionInfo}</p>}
+      {qrImage && (
+        <div className="secret-box">
+          <strong>QR Code WhatsApp</strong>
+          <img
+            src={
+              qrImage.startsWith("data:")
+                ? qrImage
+                : `data:image/png;base64,${qrImage}`
+            }
+            alt="QR Code WhatsApp"
+            style={{
+              width: 260,
+              height: 260,
+              background: "#fff",
+              borderRadius: 8,
+              padding: 8,
+            }}
+          />
+          <small>
+            WhatsApp do celular → Aparelhos conectados → Conectar aparelho. O QR
+            expira em ~1 minuto; use "Gerar QR" para renovar.
+          </small>
+        </div>
+      )}
+      {qrInfo && !qrImage && <p className="success">{qrInfo}</p>}
 
       <div className="content-grid">
         <article className="panel">
@@ -294,7 +357,18 @@ export default function InboxPage() {
                         {ch.provider ?? "webhook"} · {ch.external_key}
                       </small>
                     </div>
-                    <span>{ch.active ? "ativo" : "off"}</span>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <span>{ch.active ? "ativo" : "off"}</span>
+                      {(ch.provider ?? "webhook") === "evolution" && (
+                        <button
+                          type="button"
+                          onClick={() => void fetchQr(ch)}
+                          disabled={busy}
+                        >
+                          Gerar QR
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
