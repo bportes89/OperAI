@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiJson } from "../../lib/api";
 import { agentLabel } from "../../lib/format";
+import { MarkdownLite } from "../../lib/markdown";
 import type { Agent, ChatResult } from "../../lib/types";
 
 export default function AgentsPage() {
@@ -181,9 +182,15 @@ export default function AgentsPage() {
               {history.map((msg, i) => (
                 <div key={`${msg.role}-${i}`} style={{ marginBottom: 12 }}>
                   <strong>{msg.role === "user" ? "Você" : "Agente"}</strong>
-                  <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0" }}>
-                    {msg.content}
-                  </p>
+                  {msg.role === "assistant" ? (
+                    <div style={{ margin: "4px 0 0" }}>
+                      <MarkdownLite text={msg.content} />
+                    </div>
+                  ) : (
+                    <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0" }}>
+                      {msg.content}
+                    </p>
+                  )}
                 </div>
               ))}
               {chatResult && (
