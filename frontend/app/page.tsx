@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { HeroFloatLayer, HeroPanelTilt, LandingFX } from "./landing-fx";
 
 const STEPS = [
   {
@@ -198,6 +199,7 @@ const PLANS = [
 export default function LandingPage() {
   return (
     <main className="lp">
+      <LandingFX />
       <header className="lp-nav">
         <Link href="/" className="lp-brand" aria-label="OperAI">
           <img
@@ -222,6 +224,7 @@ export default function LandingPage() {
 
       <section className="lp-hero">
         <div className="lp-hero-plane" aria-hidden="true" />
+        <HeroFloatLayer />
         <div className="lp-hero-inner">
           <p className="lp-brand-word">OperAI</p>
           <h1>
@@ -241,31 +244,33 @@ export default function LandingPage() {
             </a>
           </div>
         </div>
-        <div className="lp-hero-visual" aria-hidden="true">
-          <div className="lp-hero-panel">
-            <div className="lp-panel-bar">
-              <span>Operação</span>
-              <span>Ao vivo</span>
+        <div className="lp-hero-visual">
+          <HeroPanelTilt>
+            <div className="lp-hero-panel">
+              <div className="lp-panel-bar">
+                <span>Operação</span>
+                <span>Ao vivo</span>
+              </div>
+              <div className="lp-panel-body">
+                <div className="lp-panel-line">
+                  <strong>Atendimento</strong>
+                  <em>Resposta com base na política comercial</em>
+                </div>
+                <div className="lp-panel-line">
+                  <strong>Cobrança</strong>
+                  <em>Follow-up de títulos em atraso</em>
+                </div>
+                <div className="lp-panel-line">
+                  <strong>Comercial</strong>
+                  <em>Qualificação com contexto do CRM</em>
+                </div>
+              </div>
             </div>
-            <div className="lp-panel-body">
-              <div className="lp-panel-line">
-                <strong>Atendimento</strong>
-                <em>Resposta com base na política comercial</em>
-              </div>
-              <div className="lp-panel-line">
-                <strong>Cobrança</strong>
-                <em>Follow-up de títulos em atraso</em>
-              </div>
-              <div className="lp-panel-line">
-                <strong>Comercial</strong>
-                <em>Qualificação com contexto do CRM</em>
-              </div>
-            </div>
-          </div>
+          </HeroPanelTilt>
         </div>
       </section>
 
-      <section className="lp-section" id="problema">
+      <section className="lp-section lp-reveal" id="problema">
         <div className="lp-kicker">O problema</div>
         <div className="lp-section-head">
           <h2>Ferramentas demais. Contexto de menos.</h2>
@@ -283,7 +288,7 @@ export default function LandingPage() {
         </ul>
       </section>
 
-      <section className="lp-section lp-section-alt" id="solucao">
+      <section className="lp-section lp-section-alt lp-reveal" id="solucao">
         <div className="lp-kicker">A solução</div>
         <div className="lp-section-head">
           <h2>Uma plataforma. Uma operação coerente.</h2>
@@ -295,7 +300,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="lp-section" id="como-funciona">
+      <section className="lp-section lp-reveal" id="como-funciona">
         <div className="lp-kicker">Como funciona</div>
         <div className="lp-section-head">
           <h2>Do cadastro ao resultado em quatro tempos.</h2>
@@ -312,7 +317,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="lp-section lp-section-alt" id="funcionalidades">
+      <section className="lp-section lp-section-alt lp-reveal" id="funcionalidades">
         <div className="lp-kicker">Principais funcionalidades</div>
         <div className="lp-section-head">
           <h2>O essencial para operar com agentes.</h2>
@@ -328,7 +333,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="lp-section" id="diferenciais">
+      <section className="lp-section lp-reveal" id="diferenciais">
         <div className="lp-kicker">Diferenciais</div>
         <div className="lp-section-head">
           <h2>OperAI × soluções tradicionais</h2>
@@ -350,7 +355,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="lp-section lp-section-alt" id="casos-de-uso">
+      <section className="lp-section lp-section-alt lp-reveal" id="casos-de-uso">
         <div className="lp-kicker">Casos de uso</div>
         <div className="lp-section-head">
           <h2>Onde a plataforma gera tração primeiro.</h2>
@@ -366,7 +371,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="lp-section" id="integracoes">
+      <section className="lp-section lp-reveal" id="integracoes">
         <div className="lp-kicker">Integrações</div>
         <div className="lp-section-head">
           <h2>Encaixa na stack que você já escolhe.</h2>
@@ -382,7 +387,7 @@ export default function LandingPage() {
         </ul>
       </section>
 
-      <section className="lp-section lp-section-alt" id="resultados">
+      <section className="lp-section lp-section-alt lp-reveal" id="resultados">
         <div className="lp-kicker">Resultados e depoimentos</div>
         <div className="lp-section-head">
           <h2>O que muda quando o contexto fica centralizado.</h2>
@@ -398,7 +403,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="lp-section" id="seguranca">
+      <section className="lp-section lp-reveal" id="seguranca">
         <div className="lp-kicker">Segurança</div>
         <div className="lp-section-head">
           <h2>Controle de acesso e isolamento por empresa.</h2>
@@ -414,7 +419,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="lp-section lp-section-alt" id="faq">
+      <section className="lp-section lp-section-alt lp-reveal" id="faq">
         <div className="lp-kicker">FAQ</div>
         <div className="lp-section-head">
           <h2>Perguntas frequentes</h2>
@@ -430,7 +435,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="lp-section" id="planos">
+      <section className="lp-section lp-reveal" id="planos">
         <div className="lp-kicker">Planos</div>
         <div className="lp-section-head">
           <h2>Planos para cada estágio da operação</h2>
