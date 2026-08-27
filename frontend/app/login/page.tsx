@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError, login } from "../lib/api";
+import { LanguagePicker, LocaleProvider, useLocale } from "../lib/locale";
 
 const ORG_KEY = "operai_last_org";
 type Tab = "email" | "org";
@@ -20,8 +21,8 @@ function IconMail() {
 function IconLock() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <rect x="5" y="10" width="14" height="9.5" rx="2" stroke="#f5c400" strokeWidth="1.5" />
-      <path d="M8 10V7.8a4 4 0 0 1 8 0V10" stroke="#f5c400" strokeWidth="1.5" strokeLinecap="round" />
+      <rect x="5" y="10" width="14" height="9.5" rx="2" stroke="#ffc107" strokeWidth="1.5" />
+      <path d="M8 10V7.8a4 4 0 0 1 8 0V10" stroke="#ffc107" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   );
 }
@@ -49,17 +50,9 @@ function IconEye({ off }: { off?: boolean }) {
   );
 }
 
-function IconGlobe() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <circle cx="12" cy="12" r="8.5" stroke="#4d8cff" strokeWidth="1.5" />
-      <path d="M3.5 12h17M12 3.5c2.4 2.6 3.6 5.4 3.6 8.5s-1.2 5.9-3.6 8.5c-2.4-2.6-3.6-5.4-3.6-8.5S9.6 6.1 12 3.5Z" stroke="#4d8cff" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const { t } = useLocale();
   const [tab, setTab] = useState<Tab>("org");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -85,7 +78,7 @@ export default function LoginPage() {
       .toLowerCase();
 
     if (!organization_slug) {
-      setError("Informe o identificador da empresa.");
+      setError(t.orgRequired);
       setTab("org");
       setBusy(false);
       return;
@@ -105,7 +98,7 @@ export default function LoginPage() {
           ? e.message
           : e instanceof Error
             ? e.message
-            : "Falha ao entrar. Tente novamente.",
+            : t.loginFail,
       );
     } finally {
       setBusy(false);
@@ -126,15 +119,11 @@ export default function LoginPage() {
         </div>
 
         <div className="auth-v2-copy">
-          <h1>Acesse sua plataforma</h1>
-          <p>Entre com sua conta para continuar</p>
+          <h1>{t.accessTitle}</h1>
+          <p>{t.accessSubtitle}</p>
         </div>
 
-        <div className="auth-v2-lang" aria-hidden>
-          <IconGlobe />
-          Português (Brasil)
-          <span style={{ fontSize: 10, opacity: 0.75 }}>▼</span>
-        </div>
+        <LanguagePicker />
       </section>
 
       <section className="auth-v2-right">
@@ -147,7 +136,7 @@ export default function LoginPage() {
               aria-selected={tab === "email"}
               onClick={() => setTab("email")}
             >
-              E-mail
+              {t.tabEmail}
             </button>
             <button
               type="button"
@@ -156,21 +145,21 @@ export default function LoginPage() {
               aria-selected={tab === "org"}
               onClick={() => setTab("org")}
             >
-              Entrar com organização
+              {t.tabOrg}
             </button>
           </div>
 
           <form onSubmit={onSubmit}>
             {tab === "org" && (
               <label className="auth-v2-field">
-                <span>Identificador da empresa</span>
+                <span>{t.orgLabel}</span>
                 <div className="auth-v2-input">
                   <IconBuilding />
                   <input
                     name="organization_slug"
                     required
                     pattern="[a-z0-9-]+"
-                    placeholder="minha-empresa"
+                    placeholder={t.orgPlaceholder}
                     value={orgSlug}
                     onChange={(e) => setOrgSlug(e.target.value.toLowerCase())}
                     autoComplete="organization"
@@ -180,7 +169,7 @@ export default function LoginPage() {
             )}
 
             <label className="auth-v2-field">
-              <span>E-mail</span>
+              <span>{t.emailLabel}</span>
               <div className="auth-v2-input">
                 <IconMail />
                 <input
@@ -188,13 +177,13 @@ export default function LoginPage() {
                   type="email"
                   required
                   autoComplete="email"
-                  placeholder="Seu endereço de e-mail"
+                  placeholder={t.emailPlaceholder}
                 />
               </div>
             </label>
 
             <label className="auth-v2-field">
-              <span>Senha</span>
+              <span>{t.passwordLabel}</span>
               <div className="auth-v2-input">
                 <IconLock />
                 <input
@@ -203,12 +192,12 @@ export default function LoginPage() {
                   required
                   minLength={8}
                   autoComplete="current-password"
-                  placeholder="Sua senha"
+                  placeholder={t.passwordPlaceholder}
                 />
                 <button
                   type="button"
                   className="icon-btn"
-                  aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
                   onClick={() => setShowPassword((v) => !v)}
                 >
                   <IconEye off={showPassword} />
@@ -217,34 +206,34 @@ export default function LoginPage() {
             </label>
 
             <div className="auth-v2-forgot">
-              <button
-                type="button"
-                onClick={() =>
-                  setError(
-                    "Recuperação de senha em breve. Fale com o administrador.",
-                  )
-                }
-              >
-                Esqueceu sua senha?
+              <button type="button" onClick={() => setError(t.forgotSoon)}>
+                {t.forgotPassword}
               </button>
             </div>
 
             {error ? <p className="auth-v2-error">{error}</p> : null}
 
             <button type="submit" className="auth-v2-submit" disabled={busy}>
-              {busy ? "Entrando..." : "Entrar"}
+              {busy ? t.entering : t.enter}
             </button>
           </form>
 
           <p className="auth-v2-terms">
-            Ao fazer login, você concorda com nossos{" "}
-            <a href="#termos">Termos e Condições</a>.
+            {t.termsPrefix} <a href="#termos">{t.termsLink}</a>.
           </p>
           <p className="auth-v2-switch">
-            Não tem conta? <Link href="/register">Criar empresa</Link>
+            {t.noAccount} <Link href="/register">{t.createCompany}</Link>
           </p>
         </div>
       </section>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <LocaleProvider>
+      <LoginForm />
+    </LocaleProvider>
   );
 }
