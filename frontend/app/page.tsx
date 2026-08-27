@@ -44,8 +44,13 @@ export default function LandingPage() {
     <main className="landing">
       <nav className="landing-nav">
         <div className="landing-brand">
-          <div className="logo">O</div>
-          OperAI
+          <img
+            src="/operai-logo.png"
+            alt="OperAI"
+            className="brand-logo"
+            width={188}
+            height={56}
+          />
         </div>
         <div className="landing-nav-actions">
           <Link href="/login">Entrar</Link>

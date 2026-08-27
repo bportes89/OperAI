@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
-import { DM_Sans, Fraunces } from "next/font/google";
+import { DM_Sans, Fraunces, Inter } from "next/font/google";
 import "./styles.css";
+import "./auth-v2.css";
+import "./app-theme.css";
 import "./landing.css";
 import "./agents.css";
 import "./knowledge.css";
@@ -22,6 +24,12 @@ const fraunces = Fraunces({
   display: "swap",
 });
 
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   title: "OperAI — Equipe de IA para PME",
   description:
@@ -30,7 +38,10 @@ export const metadata: Metadata = {
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="pt-BR" className={`${dmSans.variable} ${fraunces.variable}`}>
+    <html
+      lang="pt-BR"
+      className={`${dmSans.variable} ${fraunces.variable} ${inter.variable}`}
+    >
       <body>{children}</body>
     </html>
   );

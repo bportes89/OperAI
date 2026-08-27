@@ -1,0 +1,391 @@
+/* Platform dark theme — same visual language as auth (black / purple / yellow) */
+
+body:has(.app-shell),
+body:has(.app-shell) .workspace {
+  background: #050506;
+  color: #f2f2f5;
+}
+
+.app-shell {
+  --ink: #f2f2f5;
+  --ink-soft: #d4d4dc;
+  --teal: #ffc107;
+  --teal-deep: #ffb300;
+  --accent: #ffc107;
+  --accent-strong: #ffd54f;
+  --sand: #121215;
+  --paper: #050506;
+  --line: #2c2c31;
+  --muted: #8b8b93;
+  --ok: #3dd68c;
+  --danger: #ff6b6b;
+  --radius: 14px;
+
+  background:
+    radial-gradient(ellipse 70% 50% at 0% 0%, rgba(125, 60, 255, 0.22), transparent 55%),
+    radial-gradient(ellipse 55% 45% at 100% 100%, rgba(255, 193, 7, 0.12), transparent 50%),
+    #050506;
+  color: #f2f2f5;
+}
+
+.app-shell aside {
+  background: #0c0c0f;
+  border-right: 1px solid #222228;
+  color: #f2f2f5;
+  padding: 22px 14px;
+}
+
+.app-shell nav a,
+.app-shell .logout {
+  color: #9a9aa3;
+  border-radius: 10px;
+  padding: 11px 12px;
+}
+
+.app-shell nav a:hover,
+.app-shell .logout:hover {
+  background: #1a1a1f;
+  color: #fff;
+}
+
+.app-shell nav a.selected {
+  background: rgba(255, 193, 7, 0.14);
+  color: #ffc107;
+  font-weight: 700;
+}
+
+.app-shell .workspace {
+  padding: 28px 34px 48px;
+  color: #f2f2f5;
+}
+
+.app-shell .workspace h1,
+.app-shell .panel-title h2,
+.app-shell .metrics strong {
+  color: #fff;
+  font-family: var(--font-inter), Inter, system-ui, sans-serif;
+}
+
+.app-shell .workspace header span,
+.app-shell .panel-title span,
+.app-shell .metrics span,
+.app-shell .metrics small,
+.app-shell .row small,
+.app-shell .empty,
+.app-shell .pricing-note {
+  color: #8b8b93;
+}
+
+.app-shell .metrics article,
+.app-shell .panel,
+.app-shell .agent-card,
+.app-shell .check-item,
+.app-shell .team-card,
+.app-shell .campaign-card {
+  background: #141416;
+  border: 1px solid #2c2c31;
+  color: #f2f2f5;
+  box-shadow: none;
+}
+
+.app-shell .panel-title {
+  border-bottom-color: #2a2a2f;
+}
+
+.app-shell .row,
+.app-shell .inbox-thread,
+.app-shell .activity-row,
+.app-shell .team-row,
+.app-shell .finance-row {
+  border-bottom-color: #222228;
+}
+
+.app-shell .empty strong {
+  color: #fff;
+}
+
+.app-shell .online {
+  background: rgba(61, 214, 140, 0.14);
+  color: #3dd68c;
+}
+
+.app-shell .stage {
+  background: rgba(125, 60, 255, 0.16);
+  color: #c4b5ff;
+}
+
+.app-shell .primary,
+.app-shell button.primary,
+.app-shell a.primary {
+  background: #ffc107;
+  color: #111;
+  border: 0;
+  font-weight: 800;
+}
+
+.app-shell .primary:hover:not(:disabled),
+.app-shell button.primary:hover:not(:disabled),
+.app-shell a.primary:hover {
+  background: #ffd54f;
+}
+
+.app-shell .secondary,
+.app-shell .ghost-btn,
+.app-shell .panel-title button {
+  background: #1a1a1f;
+  border: 1px solid #333338;
+  color: #f2f2f5;
+}
+
+.app-shell .secondary:hover,
+.app-shell .ghost-btn:hover,
+.app-shell .panel-title button:hover {
+  background: #222228;
+}
+
+.app-shell label {
+  color: #a0a0a8;
+}
+
+.app-shell input,
+.app-shell select,
+.app-shell textarea {
+  background: #0f0f12;
+  border: 1px solid #3a3a40;
+  color: #fff;
+}
+
+.app-shell input::placeholder,
+.app-shell textarea::placeholder {
+  color: #6a6a73;
+}
+
+.app-shell input:focus,
+.app-shell select:focus,
+.app-shell textarea:focus {
+  border-color: #55555c;
+  box-shadow: 0 0 0 3px rgba(255, 193, 7, 0.14);
+}
+
+.app-shell .error {
+  background: #241414;
+  border-color: #5a2a2a;
+  color: #ffb0b0;
+}
+
+.app-shell .success {
+  background: #10241a;
+  border-color: #1f5a3d;
+  color: #8ee0b5;
+}
+
+.app-shell .banner-warn {
+  background: rgba(255, 193, 7, 0.1);
+  border: 1px solid rgba(255, 193, 7, 0.35);
+  color: #ffd54f;
+}
+
+.app-shell .banner-danger {
+  background: rgba(255, 107, 107, 0.1);
+  border: 1px solid rgba(255, 107, 107, 0.35);
+  color: #ffb0b0;
+}
+
+.app-shell .check-item {
+  background: #121215;
+}
+
+.app-shell .check-item.done {
+  background: rgba(61, 214, 140, 0.08);
+  border-color: rgba(61, 214, 140, 0.35);
+}
+
+.app-shell .check-dot {
+  border-color: #3a3a40;
+  color: #8b8b93;
+}
+
+.app-shell .check-item.done .check-dot {
+  background: #3dd68c;
+  border-color: #3dd68c;
+  color: #0a0a0a;
+}
+
+.app-shell .kpi-list > div {
+  background: #1a1a1f;
+}
+
+.app-shell .kpi-list span,
+.app-shell .activity-row small,
+.app-shell .activity-row time {
+  color: #8b8b93;
+}
+
+.app-shell .activity-dot {
+  background: #ffc107;
+}
+
+.app-shell .agent-icon {
+  background: rgba(125, 60, 255, 0.18);
+  color: #c4b5ff;
+}
+
+.app-shell .agent-card {
+  border-color: #2c2c31;
+}
+
+.app-shell .agent-card small,
+.app-shell .agent-card p {
+  color: #8b8b93;
+}
+
+.app-shell .agent-status {
+  background: #1a1a1f;
+  color: #cfcfd6;
+}
+
+.app-shell .agent-status.on {
+  background: rgba(61, 214, 140, 0.14);
+  color: #3dd68c;
+}
+
+.app-shell .agent-status.warn {
+  background: rgba(255, 193, 7, 0.14);
+  color: #ffc107;
+}
+
+.app-shell .chat-box,
+.app-shell .chat-bubble,
+.app-shell .doc-card,
+.app-shell .finance-card,
+.app-shell .secret-box {
+  background: #121215;
+  border-color: #2c2c31;
+  color: #f2f2f5;
+}
+
+.app-shell .secret-box {
+  background: rgba(255, 193, 7, 0.08);
+  border: 1px solid rgba(255, 193, 7, 0.3);
+}
+
+.app-shell .inbox-thread > span {
+  background: #ffc107;
+  color: #111;
+}
+
+.app-shell .agent-status.active {
+  background: rgba(61, 214, 140, 0.14);
+  color: #3dd68c;
+}
+
+.app-shell .agent-status.paused {
+  background: rgba(255, 193, 7, 0.14);
+  color: #ffc107;
+}
+
+.app-shell .agent-actions button,
+.app-shell .finance-row > button,
+.app-shell .proposal-actions button,
+.app-shell .team-row > button {
+  background: #1a1a1f;
+  border: 1px solid #333338;
+  color: #f2f2f5;
+}
+
+.app-shell .chat-result {
+  background: #121215;
+  border: 1px solid #2c2c31;
+}
+
+.app-shell .chat-result p {
+  color: #cfcfd6;
+}
+
+.app-shell .chat-result small {
+  color: #ffc107;
+}
+
+.app-shell .finance-status {
+  background: #1a1a1f;
+  color: #cfcfd6;
+}
+
+.app-shell .finance-status.overdue {
+  background: rgba(255, 107, 107, 0.14);
+  color: #ff8e8e;
+}
+
+.app-shell .finance-status.paid {
+  background: rgba(61, 214, 140, 0.14);
+  color: #3dd68c;
+}
+
+.app-shell .campaign-card {
+  background: #141416;
+  border-color: #2c2c31;
+}
+
+.app-shell .campaign-card > p,
+.app-shell .campaign-card small,
+.app-shell .team-row small,
+.app-shell .finance-row small,
+.app-shell .knowledge-doc small {
+  color: #8b8b93;
+}
+
+.app-shell .campaign-metrics span,
+.app-shell .knowledge-doc span {
+  background: #1a1a1f;
+  color: #cfcfd6;
+}
+
+.app-shell .avatar {
+  background: rgba(125, 60, 255, 0.2);
+  color: #c4b5ff;
+}
+
+.app-shell .knowledge-doc,
+.app-shell .knowledge-hit {
+  border-color: #2c2c31;
+}
+
+.app-shell .knowledge-hit {
+  background: #141416;
+}
+
+.app-shell .knowledge-hit p {
+  color: #cfcfd6;
+}
+
+.app-shell textarea {
+  background: #0f0f12;
+  border-color: #3a3a40;
+  color: #fff;
+}
+
+.app-shell a:not(.primary):not(.secondary) {
+  color: inherit;
+}
+
+.mobile-bar {
+  background: #0c0c0f !important;
+  border-bottom: 1px solid #222228;
+  color: #fff;
+}
+
+.mobile-bar button {
+  border-color: #333338;
+  color: #fff;
+}
+
+.sidebar-logo {
+  filter: none;
+}
+
+@media (max-width: 960px) {
+  .app-shell aside {
+    background: #0c0c0f;
+    border-right: 1px solid #222228;
+  }
+}

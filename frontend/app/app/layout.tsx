@@ -80,8 +80,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
   if (!ready) {
     return (
-      <main className="workspace" style={{ padding: 40 }}>
-        Carregando...
+      <main className="app-shell">
+        <section className="workspace" style={{ padding: 40 }}>
+          Carregando...
+        </section>
       </main>
     );
   }
@@ -92,7 +94,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   return (
     <>
       <div className="mobile-bar">
-        <strong>OperAI</strong>
+        <img src="/operai-logo.png" alt="OperAI" className="brand-logo-sm" height={28} />
         <button type="button" onClick={() => setMenuOpen(true)}>
           Menu
         </button>
@@ -106,8 +108,13 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       )}
       <main className="app-shell">
         <aside className={menuOpen ? "open" : ""}>
-          <div className="logo">O</div>
-          <strong>OperAI</strong>
+          <img
+            src="/operai-logo.png"
+            alt="OperAI"
+            className="brand-logo sidebar-logo"
+            width={174}
+            height={52}
+          />
           <nav>
             {NAV.map((item) => (
               <Link
