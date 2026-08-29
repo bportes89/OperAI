@@ -23,7 +23,7 @@ from app.models import (
 from app.rag import embed_text,retrieve
 from app.schemas import (
     AgentFromPresetIn,AgentIn,AgentQueryIn,AgentStatusIn,BrandKitIn,CampaignIn,CampaignSpendRequestIn,CampaignStatusIn,ChannelIn,CheckoutIn,
-    EvolutionConnectIn,IncomingMessageIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,MetaConnectIn,
+    EvolutionConnectIn,IncomingMessageIn,InboxThreadStatusIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,MetaConnectIn,
     MarketingDiagnosisIn,MarketingDiscoveryIn,MarketingEngagementIn,MarketingGovernanceIn,MarketingLeadIn,MarketingPackageIn,MarketingSpendIn,
     MarketingSpendReviewIn,OnboardingUpdateIn,OpportunityIn,OpportunityStageIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
     FinanceSendIn,RegisterIn,TeamMemberIn,TeamMemberUpdateIn,TemplateSendIn,TokenPair,
@@ -45,6 +45,15 @@ def split_content(value:str,size:int=900,overlap:int=120)->list[str]:
 def parse_uuid(value:str,label:str="Resource")->uuid.UUID:
     try:return uuid.UUID(value)
     except ValueError:raise HTTPException(404,f"{label} not found")
+
+def _thread_allows_auto_reply(thread:InboxThread)->bool:
+    """IA só responde em conversas 'open'. 'human' = atendente; 'closed' = encerrada."""
+    return (thread.status or "open") == "open"
+
+def _prepare_thread_for_inbound(thread:InboxThread)->None:
+    """Nova mensagem em conversa fechada reabre para a IA; 'human' permanece."""
+    if (thread.status or "open") == "closed":
+        thread.status="open"
 
 def _dig(payload:dict,path:str)->Any:
     cur:Any=payload
@@ -800,11 +809,12 @@ async def meta_webhook(channel_key:str,request:Request,db:Db):
         if not thread:
             thread=InboxThread(organization_id=channel.organization_id,channel_id=channel.id,contact_id=contact.id)
             db.add(thread);await db.flush()
+        _prepare_thread_for_inbound(thread)
         thread.unread_count+=1;thread.last_message_at=datetime.now(UTC)
         inbound=ChannelMessage(organization_id=channel.organization_id,channel_id=channel.id,thread_id=thread.id,external_message_id=parsed["external_message_id"],direction="inbound",content=parsed["text"],status="received")
         db.add(inbound)
         agent=await db.scalar(select(Agent).where(and_(Agent.organization_id==channel.organization_id,Agent.agent_type=="whatsapp",Agent.status=="active")))
-        if agent and access_token and phone_number_id:
+        if agent and access_token and phone_number_id and _thread_allows_auto_reply(thread):
             rows=(await db.execute(select(KnowledgeChunk,KnowledgeDocument.title).join(KnowledgeDocument,KnowledgeDocument.id==KnowledgeChunk.document_id).where(KnowledgeChunk.organization_id==channel.organization_id))).all()
             sources=retrieve(parsed["text"],list(rows),5)
             try:
@@ -870,12 +880,13 @@ async def evolution_webhook(channel_key:str,request:Request,db:Db,x_evolution_to
     if not contact:contact=Contact(organization_id=channel.organization_id,name=parsed["contact_name"],phone=parsed["phone"]);db.add(contact);await db.flush()
     thread=await db.scalar(select(InboxThread).where(and_(InboxThread.channel_id==channel.id,InboxThread.contact_id==contact.id)))
     if not thread:thread=InboxThread(organization_id=channel.organization_id,channel_id=channel.id,contact_id=contact.id);db.add(thread);await db.flush()
+    _prepare_thread_for_inbound(thread)
     thread.unread_count+=1;thread.last_message_at=datetime.now(UTC)
     inbound=ChannelMessage(organization_id=channel.organization_id,channel_id=channel.id,thread_id=thread.id,external_message_id=parsed["external_message_id"],direction="inbound",content=parsed["text"],status="received")
     db.add(inbound)
     agent=await db.scalar(select(Agent).where(and_(Agent.organization_id==channel.organization_id,Agent.agent_type=="whatsapp",Agent.status=="active")))
     reply_text=None
-    if agent:
+    if agent and _thread_allows_auto_reply(thread):
         rows=(await db.execute(select(KnowledgeChunk,KnowledgeDocument.title).join(KnowledgeDocument,KnowledgeDocument.id==KnowledgeChunk.document_id).where(KnowledgeChunk.organization_id==channel.organization_id))).all()
         sources=retrieve(parsed["text"],list(rows),5)
         try:
@@ -909,6 +920,7 @@ async def whatsapp_webhook(channel_key:str,data:IncomingMessageIn,db:Db,x_operai
     if not contact:contact=Contact(organization_id=channel.organization_id,name=data.contact_name,phone=data.phone);db.add(contact);await db.flush()
     thread=await db.scalar(select(InboxThread).where(and_(InboxThread.channel_id==channel.id,InboxThread.contact_id==contact.id)))
     if not thread:thread=InboxThread(organization_id=channel.organization_id,channel_id=channel.id,contact_id=contact.id);db.add(thread);await db.flush()
+    _prepare_thread_for_inbound(thread)
     thread.unread_count+=1;thread.last_message_at=datetime.now(UTC)
     message=ChannelMessage(organization_id=channel.organization_id,channel_id=channel.id,thread_id=thread.id,external_message_id=data.external_message_id,direction="inbound",content=data.text,status="received")
     agent=await db.scalar(select(Agent).where(and_(Agent.organization_id==channel.organization_id,Agent.agent_type=="whatsapp",Agent.status=="active")))
@@ -919,6 +931,33 @@ async def whatsapp_webhook(channel_key:str,data:IncomingMessageIn,db:Db,x_operai
 async def inbox_threads(p:Annotated[Principal,Depends(current_principal)],db:Db):
     rows=(await db.execute(select(InboxThread,Contact,Channel).join(Contact,Contact.id==InboxThread.contact_id).join(Channel,Channel.id==InboxThread.channel_id).where(InboxThread.organization_id==p.organization_id).order_by(InboxThread.last_message_at.desc()))).all()
     return [{"id":str(t.id),"contact_name":c.name,"phone":c.phone,"channel":ch.name,"channel_id":str(ch.id),"provider":ch.provider,"status":t.status,"unread_count":t.unread_count,"last_message_at":t.last_message_at} for t,c,ch in rows]
+
+@router.patch("/inbox/threads/{thread_id}/status")
+async def patch_inbox_thread_status(thread_id:str,data:InboxThreadStatusIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER,Role.OPERATOR))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    thread=await db.scalar(select(InboxThread).where(and_(InboxThread.id==parse_uuid(thread_id,"Thread"),InboxThread.organization_id==p.organization_id)))
+    if not thread:raise HTTPException(404,"Thread not found")
+    prev=thread.status or "open"
+    thread.status=data.status
+    db.add(AuditLog(
+        organization_id=p.organization_id,user_id=p.user_id,
+        action="inbox.thread_status",resource="inbox_thread",
+        detail=f"{thread.id}:{prev}:{data.status}",
+    ))
+    await db.commit();await db.refresh(thread)
+    contact=await db.scalar(select(Contact).where(Contact.id==thread.contact_id))
+    channel=await db.scalar(select(Channel).where(Channel.id==thread.channel_id))
+    return {
+        "id":str(thread.id),
+        "contact_name":contact.name if contact else "",
+        "phone":contact.phone if contact else "",
+        "channel":channel.name if channel else "",
+        "channel_id":str(channel.id) if channel else None,
+        "provider":channel.provider if channel else None,
+        "status":thread.status,
+        "unread_count":thread.unread_count,
+        "last_message_at":thread.last_message_at,
+    }
 
 @router.get("/inbox/threads/{thread_id}/messages")
 async def inbox_messages(thread_id:str,p:Annotated[Principal,Depends(current_principal)],db:Db):
@@ -996,8 +1035,11 @@ async def queue_outgoing_message(thread_id:str,data:OutgoingMessageIn,p:Annotate
                 status="failed";error=str(exc)[:300]
     item=ChannelMessage(organization_id=p.organization_id,channel_id=thread.channel_id,thread_id=thread.id,external_message_id=f"queued_{secrets.token_hex(12)}",direction="outbound",content=data.text,status=status)
     thread.last_message_at=datetime.now(UTC)
+    # Resposta humana → pausa a IA nesta conversa
+    if (thread.status or "open") == "open":
+        thread.status="human"
     db.add_all([item,AuditLog(organization_id=p.organization_id,user_id=p.user_id,action=f"message.{status}",resource="inbox_thread",detail=str(thread.id))])
-    await db.commit();await db.refresh(item);return {"id":str(item.id),"status":item.status,"error":error}
+    await db.commit();await db.refresh(item);return {"id":str(item.id),"status":item.status,"error":error,"thread_status":thread.status}
 
 @router.post("/inbox/threads/{thread_id}/template",status_code=202)
 async def send_thread_template(thread_id:str,data:TemplateSendIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER,Role.OPERATOR))],db:Db):
@@ -1027,6 +1069,8 @@ async def send_thread_template(thread_id:str,data:TemplateSendIn,p:Annotated[Pri
         external_message_id=f"tpl_{secrets.token_hex(10)}",direction="outbound",content=preview[:12000],status=status,
     )
     thread.last_message_at=datetime.now(UTC)
+    if (thread.status or "open") == "open":
+        thread.status="human"
     db.add_all([
         item,
         AuditLog(
@@ -2131,6 +2175,15 @@ async def analytics_overview(p:Annotated[Principal,Depends(current_principal)],d
         },
     }
 
+def _inbox_status_label(detail:str)->str:
+    map_={ "open":"IA","human":"humano","closed":"encerrada" }
+    parts=detail.split(":")
+    if len(parts)>=3:
+        return f"{map_.get(parts[-2],parts[-2])} → {map_.get(parts[-1],parts[-1])}"
+    if len(parts)==1:
+        return map_.get(parts[0],parts[0])
+    return detail
+
 def _human_activity(action:str,resource:str,detail:str|None)->tuple[str,str]:
     d=(detail or "").strip()
     money_hint=""
@@ -2159,6 +2212,7 @@ def _human_activity(action:str,resource:str,detail:str|None)->tuple[str,str]:
         "campaign.status_changed":("Campanha atualizada",d.replace(":"," → ") if d else "Status alterado"),
         "message.sent":("Mensagem enviada no WhatsApp",d or "Envio"),
         "message.received":("Mensagem recebida no WhatsApp",d or "Entrada"),
+        "inbox.thread_status":("Conversa WhatsApp atualizada",_inbox_status_label(d) if d else "Status"),
         "message.template_sent":("Template WhatsApp enviado",d or "Meta"),
         "message.template_failed":("Falha ao enviar template WhatsApp",d or "Meta"),
         "marketing.diagnosis_saved":("Marketing: diagnóstico salvo","Playbook Essencial"),

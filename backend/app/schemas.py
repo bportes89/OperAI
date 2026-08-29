@@ -32,6 +32,9 @@ class OpportunityIn(BaseModel):
 class OpportunityStageIn(BaseModel):
     stage:str=Field(pattern=r"^(new|qualified|proposal|won|lost)$")
 
+class InboxThreadStatusIn(BaseModel):
+    status:str=Field(pattern=r"^(open|human|closed)$")
+
 class AgentIn(BaseModel):
     name:str=Field(min_length=2,max_length=120)
     agent_type:str=Field(pattern=r"^(commercial|whatsapp|finance|marketing)$")

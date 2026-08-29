@@ -259,7 +259,35 @@ export default function InboxPage() {
         body: JSON.stringify({ text }),
       });
       form.reset();
+      await load();
       await openThread(selectedThread);
+      setMessage("Mensagem enviada — IA pausada nesta conversa.");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setThreadStatus(status: "open" | "human" | "closed") {
+    if (!selectedThread) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const updated = await apiJson<InboxThread>(
+        `/api/v1/inbox/threads/${selectedThread}/status`,
+        { method: "PATCH", body: JSON.stringify({ status }) },
+      );
+      setThreads((prev) =>
+        prev.map((t) => (t.id === updated.id ? { ...t, ...updated } : t)),
+      );
+      const labels = {
+        open: "IA retomada nesta conversa.",
+        human: "Atendente humano — IA pausada.",
+        closed: "Conversa encerrada.",
+      };
+      setMessage(labels[status]);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -292,6 +320,12 @@ export default function InboxPage() {
   }
 
   const activeThread = threads.find((t) => t.id === selectedThread);
+  const threadStatusLabel =
+    activeThread?.status === "human"
+      ? "Atendente humano"
+      : activeThread?.status === "closed"
+        ? "Encerrada"
+        : "IA ativa";
   const activeTemplate = useMemo(
     () => templates.find((t) => t.name === selectedTemplate),
     [templates, selectedTemplate],
@@ -391,6 +425,11 @@ export default function InboxPage() {
                   <strong>{thread.contact_name}</strong>
                   <small>
                     {thread.phone} · {thread.channel}
+                    {thread.status === "human"
+                      ? " · humano"
+                      : thread.status === "closed"
+                        ? " · encerrada"
+                        : " · IA"}
                   </small>
                 </div>
                 {thread.unread_count > 0 && <span>{thread.unread_count}</span>}
@@ -402,10 +441,50 @@ export default function InboxPage() {
             <>
               <div className="panel-title" style={{ marginTop: "1.5rem" }}>
                 <div>
-                  <span>CONVERSA</span>
+                  <span>CONVERSA · {threadStatusLabel}</span>
                   <h2>{activeThread?.contact_name ?? "Mensagens"}</h2>
                 </div>
               </div>
+              <div
+                className="proposal-actions"
+                style={{ flexWrap: "wrap", marginBottom: 12 }}
+              >
+                {activeThread?.status !== "human" && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void setThreadStatus("human")}
+                  >
+                    Atendente humano
+                  </button>
+                )}
+                {activeThread?.status !== "open" && (
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={busy}
+                    onClick={() => void setThreadStatus("open")}
+                  >
+                    Retomar IA
+                  </button>
+                )}
+                {activeThread?.status !== "closed" && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void setThreadStatus("closed")}
+                  >
+                    Encerrar
+                  </button>
+                )}
+              </div>
+              <p style={{ marginTop: 0, marginBottom: 12, opacity: 0.85, lineHeight: 1.45 }}>
+                {activeThread?.status === "human"
+                  ? "IA pausada — só você responde nesta conversa."
+                  : activeThread?.status === "closed"
+                    ? "Conversa encerrada. Nova mensagem do cliente reabre com IA."
+                    : "IA responde automaticamente. Ao enviar mensagem manual, a IA pausa."}
+              </p>
               {messages.length === 0 ? (
                 <div className="empty">Sem mensagens nesta conversa.</div>
               ) : (
