@@ -109,11 +109,116 @@
   font-size: 10px;
   color: #8a9692;
 }
+.kanban {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(180px, 1fr));
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.kanban-col {
+  background: #f3f5f4;
+  border-radius: 12px;
+  min-height: 280px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid transparent;
+  transition: border-color 0.2s ease;
+}
+.kanban-col.drop-ready {
+  border-color: #3d7a5f55;
+}
+.kanban-col-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 12px 8px;
+}
+.kanban-col-head strong {
+  font-size: 13px;
+}
+.kanban-col-head span {
+  font-size: 11px;
+  color: #788580;
+  background: #fff;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.kanban-col-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 10px 12px;
+  flex: 1;
+}
+.kanban-card {
+  background: #fff;
+  border: 1px solid #e4e8e6;
+  border-radius: 10px;
+  padding: 10px;
+  cursor: grab;
+  display: grid;
+  gap: 4px;
+}
+.kanban-card.dragging {
+  opacity: 0.55;
+}
+.kanban-card strong {
+  font-size: 13px;
+}
+.kanban-card small {
+  color: #788580;
+  font-size: 11px;
+}
+.kanban-card b {
+  font-size: 12px;
+  margin-top: 2px;
+}
+.kanban-origin {
+  display: block;
+  margin-top: 4px;
+  font-size: 10px;
+  color: #3d7a5f;
+  background: rgba(61, 122, 95, 0.1);
+  border-radius: 6px;
+  padding: 3px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kanban-move {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.kanban-move button {
+  font-size: 10px;
+  padding: 3px 6px;
+}
+.crm-create-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+  max-width: 720px;
+}
+.crm-create-form button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+@media (max-width: 1100px) {
+  .kanban {
+    grid-template-columns: repeat(5, minmax(200px, 1fr));
+  }
+}
 @media (max-width: 900px) {
   .executive-grid {
     grid-template-columns: 1fr;
   }
   .dash-bar-row {
     grid-template-columns: 72px 1fr 64px;
+  }
+  .crm-create-form {
+    grid-template-columns: 1fr;
   }
 }

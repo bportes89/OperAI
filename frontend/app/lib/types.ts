@@ -4,6 +4,11 @@ export type Opportunity = {
   contact: string;
   stage: string;
   value_cents: number;
+  source_title?: string | null;
+  source_channel?: string | null;
+  source_campaign_id?: string | null;
+  campaign_name?: string | null;
+  created_at?: string | null;
 };
 
 export type Agent = {

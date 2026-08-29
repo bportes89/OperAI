@@ -25,7 +25,7 @@ from app.schemas import (
     AgentFromPresetIn,AgentIn,AgentQueryIn,AgentStatusIn,CampaignIn,CampaignStatusIn,ChannelIn,CheckoutIn,
     EvolutionConnectIn,IncomingMessageIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,MetaConnectIn,
     MarketingDiagnosisIn,MarketingDiscoveryIn,MarketingEngagementIn,MarketingGovernanceIn,MarketingLeadIn,MarketingPackageIn,MarketingSpendIn,
-    MarketingSpendReviewIn,OnboardingUpdateIn,OpportunityIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
+    MarketingSpendReviewIn,OnboardingUpdateIn,OpportunityIn,OpportunityStageIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
     RegisterIn,TeamMemberIn,TeamMemberUpdateIn,TokenPair,
 )
 
@@ -359,18 +359,63 @@ async def patch_onboarding(data:OnboardingUpdateIn,p:Annotated[Principal,Depends
     await db.commit()
     return {"step":row.step,"completed_at":row.completed_at,"checklist":checklist,"detected":detected}
 
+def _opportunity_out(x:Opportunity,campaign_name:str|None=None,lead_source:tuple[str|None,str|None]|None=None)->dict:
+    source_title=x.source_title
+    source_channel=x.source_channel
+    if lead_source:
+        if not source_title:source_title=lead_source[0]
+        if not source_channel:source_channel=lead_source[1]
+    return {
+        "id":str(x.id),
+        "company":x.company,
+        "contact":x.contact,
+        "stage":x.stage,
+        "value_cents":x.value_cents,
+        "source_title":source_title,
+        "source_channel":source_channel,
+        "source_campaign_id":str(x.source_campaign_id) if x.source_campaign_id else None,
+        "campaign_name":campaign_name,
+        "created_at":x.created_at.isoformat() if x.created_at else None,
+    }
+
 @router.get("/opportunities")
 async def opportunities(p:Annotated[Principal,Depends(current_principal)],db:Db):
-    rows=(await db.scalars(select(Opportunity).where(Opportunity.organization_id==p.organization_id))).all()
-    return [{"id":str(x.id),"company":x.company,"contact":x.contact,"stage":x.stage,"value_cents":x.value_cents} for x in rows]
+    rows=(await db.scalars(select(Opportunity).where(Opportunity.organization_id==p.organization_id).order_by(Opportunity.created_at.desc()))).all()
+    leads=(await db.scalars(select(MarketingLead).where(and_(MarketingLead.organization_id==p.organization_id,MarketingLead.opportunity_id.isnot(None))))).all()
+    lead_by_opp={str(l.opportunity_id):(l.source_title,l.source_channel,l.campaign_id) for l in leads}
+    campaign_ids={x.source_campaign_id for x in rows if x.source_campaign_id}
+    campaign_ids|={cid for _,_,cid in lead_by_opp.values() if cid}
+    campaigns={}
+    if campaign_ids:
+        camps=(await db.scalars(select(MarketingCampaign).where(MarketingCampaign.id.in_(list(campaign_ids))))).all()
+        campaigns={c.id:c.name for c in camps}
+    out=[]
+    for x in rows:
+        lead=lead_by_opp.get(str(x.id))
+        camp_id=x.source_campaign_id or (lead[2] if lead else None)
+        camp_name=campaigns.get(camp_id) if camp_id else None
+        out.append(_opportunity_out(x,camp_name,(lead[0],lead[1]) if lead else None))
+    return out
 
 @router.post("/opportunities",status_code=201)
 async def create_opportunity(data:OpportunityIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER,Role.OPERATOR))],db:Db):
     await require_billing_access(p.organization_id,db)
-    item=Opportunity(organization_id=p.organization_id,**data.model_dump())
+    payload=data.model_dump()
+    item=Opportunity(organization_id=p.organization_id,**payload)
     db.add_all([item,AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="opportunity.created",resource="opportunity",detail=data.company)])
     await db.commit();await db.refresh(item)
-    return {"id":str(item.id),**data.model_dump()}
+    return _opportunity_out(item)
+
+@router.patch("/opportunities/{opportunity_id}/stage")
+async def change_opportunity_stage(opportunity_id:str,data:OpportunityStageIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER,Role.OPERATOR))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    item=await db.scalar(select(Opportunity).where(and_(Opportunity.id==parse_uuid(opportunity_id,"Opportunity"),Opportunity.organization_id==p.organization_id)))
+    if not item:raise HTTPException(404,"Opportunity not found")
+    prev=item.stage
+    item.stage=data.stage
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="opportunity.stage_changed",resource="opportunity",detail=f"{item.company}:{prev}:{data.stage}"))
+    await db.commit();await db.refresh(item)
+    return _opportunity_out(item)
 
 def _agent_out(x:Agent)->dict:
     return {"id":str(x.id),"name":x.name,"agent_type":x.agent_type,"status":x.status,"model":x.model,"instructions":x.instructions}
@@ -1201,6 +1246,9 @@ async def create_marketing_lead(data:MarketingLeadIn,p:Annotated[Principal,Depen
         contact=data.contact_name[:160],
         stage="new",
         value_cents=data.value_cents,
+        source_title=data.source_title[:180],
+        source_channel=data.source_channel,
+        source_campaign_id=campaign_uuid,
     )
     db.add(opportunity);await db.flush()
 
@@ -1558,6 +1606,7 @@ def _human_activity(action:str,resource:str,detail:str|None)->tuple[str,str]:
             money_hint=d
     labels={
         "opportunity.created":("Nova oportunidade no CRM",d or "Negócio registrado"),
+        "opportunity.stage_changed":("Etapa do CRM atualizada",d.replace(":"," → ") if d else "Kanban"),
         "agent.created":("Agente adicionado à equipe",d or "Novo agente"),
         "agent.status_changed":("Status de agente atualizado",d.replace(":"," → ") if d else "Alteração de status"),
         "agent.queried":("Consulta a um agente",d or "Pergunta respondida"),

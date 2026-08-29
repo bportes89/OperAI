@@ -114,6 +114,34 @@ body:has(.app-shell) .workspace {
   color: #c4b5ff;
 }
 
+.app-shell .kanban-col {
+  background: #16161b;
+  border-color: #2c2c31;
+}
+
+.app-shell .kanban-col.drop-ready {
+  border-color: #3dd68c66;
+}
+
+.app-shell .kanban-col-head span {
+  background: #1a1a1f;
+  color: #8b8b93;
+}
+
+.app-shell .kanban-card {
+  background: #1a1a1f;
+  border-color: #2c2c31;
+}
+
+.app-shell .kanban-card small {
+  color: #8b8b93;
+}
+
+.app-shell .kanban-origin {
+  color: #8ee0b5;
+  background: rgba(61, 214, 140, 0.12);
+}
+
 .app-shell .primary,
 .app-shell button.primary,
 .app-shell a.primary {

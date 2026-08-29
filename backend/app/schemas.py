@@ -24,8 +24,13 @@ class TokenPair(BaseModel):
 class OpportunityIn(BaseModel):
     company:str=Field(min_length=2,max_length=160)
     contact:str=Field(min_length=2,max_length=160)
-    stage:str="new"
+    stage:str=Field(default="new",pattern=r"^(new|qualified|proposal|won|lost)$")
     value_cents:int=Field(ge=0)
+    source_title:str|None=Field(default=None,max_length=180)
+    source_channel:str|None=Field(default=None,max_length=40)
+
+class OpportunityStageIn(BaseModel):
+    stage:str=Field(pattern=r"^(new|qualified|proposal|won|lost)$")
 
 class AgentIn(BaseModel):
     name:str=Field(min_length=2,max_length=120)
