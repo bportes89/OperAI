@@ -268,12 +268,12 @@ export default function MarketingPage() {
           Nota / contexto do interesse
           <textarea name="note" placeholder="Comentou no post, pediu orçamento…" />
         </label>
-        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <label className="check-row">
           <input name="consent_lgpd" type="checkbox" required />
           Consentimento LGPD: o interessado autorizou o tratamento dos dados
           para contato comercial
         </label>
-        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <label className="check-row">
           <input name="is_crisis" type="checkbox" />
           Situação sensível / crise — escalar para humano (sem resposta automática)
         </label>
@@ -983,7 +983,7 @@ export default function MarketingPage() {
                   ).toFixed(2)}
                 />
               </label>
-              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <label className="check-row">
                 <input
                   name="crisis_escalation"
                   type="checkbox"
@@ -1003,50 +1003,53 @@ export default function MarketingPage() {
                 O agente guia; a verificação de identidade nas plataformas é
                 sempre humana.
               </p>
-              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input
-                  name="google_business"
-                  type="checkbox"
-                  defaultChecked={!!governance.account_checklist.google_business}
-                />
-                Perfil da Empresa no Google (Business Profile) verificado
-              </label>
-              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input
-                  name="meta_business"
-                  type="checkbox"
-                  defaultChecked={!!governance.account_checklist.meta_business}
-                />
-                Meta Business Manager criado/verificado
-              </label>
-              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input
-                  name="whatsapp_business"
-                  type="checkbox"
-                  defaultChecked={
-                    !!governance.account_checklist.whatsapp_business
-                  }
-                />
-                WhatsApp Business / API credenciado
-              </label>
-              <strong style={{ marginTop: 12 }}>Checklist SEO / Google</strong>
-              {Object.entries(SEO_LABELS).map(([key, label]) => (
-                <label
-                  key={key}
-                  style={{ display: "flex", gap: 8, alignItems: "center" }}
-                >
+              <div className="checklist-block">
+                <label className="check-row">
                   <input
-                    name={key}
+                    name="google_business"
                     type="checkbox"
-                    defaultChecked={Boolean(
-                      (governance.seo_checklist as Record<string, boolean> | undefined)?.[
-                        key
-                      ],
-                    )}
+                    defaultChecked={!!governance.account_checklist.google_business}
                   />
-                  {label}
+                  Perfil da Empresa no Google (Business Profile) verificado
                 </label>
-              ))}
+                <label className="check-row">
+                  <input
+                    name="meta_business"
+                    type="checkbox"
+                    defaultChecked={!!governance.account_checklist.meta_business}
+                  />
+                  Meta Business Manager criado/verificado
+                </label>
+                <label className="check-row">
+                  <input
+                    name="whatsapp_business"
+                    type="checkbox"
+                    defaultChecked={
+                      !!governance.account_checklist.whatsapp_business
+                    }
+                  />
+                  WhatsApp Business / API credenciado
+                </label>
+              </div>
+              <strong style={{ marginTop: 12 }}>Checklist SEO / Google</strong>
+              <div className="checklist-block">
+                {Object.entries(SEO_LABELS).map(([key, label]) => (
+                  <label key={key} className="check-row">
+                    <input
+                      name={key}
+                      type="checkbox"
+                      defaultChecked={Boolean(
+                        (
+                          governance.seo_checklist as
+                            | Record<string, boolean>
+                            | undefined
+                        )?.[key],
+                      )}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
               <button className="primary" disabled={busy} type="submit">
                 Salvar governança
               </button>
