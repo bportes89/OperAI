@@ -50,8 +50,70 @@
   font-size: 10px;
   color: #8a9692;
 }
+.dash-bars {
+  display: grid;
+  gap: 10px;
+}
+.dash-bar-row {
+  display: grid;
+  grid-template-columns: 88px 1fr 72px;
+  gap: 8px;
+  align-items: center;
+}
+.dash-bar-label {
+  font-size: 12px;
+  color: #6a7571;
+}
+.dash-bar-track {
+  height: 10px;
+  background: #e8ecea;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.dash-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  min-width: 2px;
+  transition: width 0.35s ease;
+}
+.dash-bar-value {
+  font-size: 12px;
+  text-align: right;
+}
+.dash-spark {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+  align-items: end;
+  min-height: 110px;
+  padding-top: 8px;
+}
+.dash-spark-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.dash-spark-bar {
+  width: 100%;
+  max-width: 28px;
+  background: #3d7a5f;
+  border-radius: 6px 6px 2px 2px;
+  transition: height 0.35s ease;
+}
+.dash-spark-col span {
+  font-size: 11px;
+  color: #6a7571;
+}
+.dash-spark-col small {
+  font-size: 10px;
+  color: #8a9692;
+}
 @media (max-width: 900px) {
   .executive-grid {
     grid-template-columns: 1fr;
+  }
+  .dash-bar-row {
+    grid-template-columns: 72px 1fr 64px;
   }
 }

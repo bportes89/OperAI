@@ -247,6 +247,27 @@ body:has(.app-shell) .workspace {
   background: #1a1a1f;
 }
 
+.app-shell .dash-bar-track {
+  background: #2a2a30;
+}
+
+.app-shell .dash-bar-label,
+.app-shell .dash-spark-col span {
+  color: #a0a0a8;
+}
+
+.app-shell .dash-spark-col small {
+  color: #7a7a84;
+}
+
+.app-shell .dash-spark-bar {
+  background: #3dd68c;
+}
+
+.app-shell .dash-bar-fill {
+  background: #3dd68c !important;
+}
+
 .app-shell .kpi-list span,
 .app-shell .activity-row small,
 .app-shell .activity-row time {

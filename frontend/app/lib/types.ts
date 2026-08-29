@@ -107,6 +107,21 @@ export type Analytics = {
     leads_7d: number;
     opportunities_7d: number;
   };
+  charts?: {
+    crm_funnel: { stage: string; label: string; count: number }[];
+    finance_mix: { key: string; label: string; cents: number }[];
+    activity_7d: { date: string; count: number }[];
+  };
+};
+
+export type Activity = {
+  id: string;
+  action: string;
+  resource: string;
+  detail: string | null;
+  title?: string;
+  summary?: string;
+  created_at: string;
 };
 
 export type MarketingLead = {
@@ -205,14 +220,6 @@ export type MarketingGrowth = {
     packages: Record<string, string[]>;
   };
   campaigns: number;
-};
-
-export type Activity = {
-  id: string;
-  action: string;
-  resource: string;
-  detail: string | null;
-  created_at: string;
 };
 
 export type TeamMember = {

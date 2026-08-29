@@ -1373,17 +1373,101 @@ async def analytics_overview(p:Annotated[Principal,Depends(current_principal)],d
     campaigns=(await db.scalars(select(MarketingCampaign).where(MarketingCampaign.organization_id==p.organization_id))).all()
     since=datetime.now(UTC)-timedelta(days=7)
     mkt_leads=(await db.scalars(select(MarketingLead).where(and_(MarketingLead.organization_id==p.organization_id,MarketingLead.created_at>=since)))).all()
+    audits=(await db.scalars(select(AuditLog).where(and_(AuditLog.organization_id==p.organization_id,AuditLog.created_at>=since)).order_by(AuditLog.created_at.asc()))).all()
+
+    stage_order=["new","qualified","proposal","won","lost"]
+    stage_labels={"new":"Novos","qualified":"Qualificados","proposal":"Proposta","won":"Ganhos","lost":"Perdidos"}
+    stage_counts={s:0 for s in stage_order}
+    for opp in opportunities:
+        key=opp.stage if opp.stage in stage_counts else "new"
+        stage_counts[key]+=1
+    crm_funnel=[{"stage":s,"label":stage_labels[s],"count":stage_counts[s]} for s in stage_order]
+
+    day_keys=[(datetime.now(UTC)-timedelta(days=i)).date().isoformat() for i in range(6,-1,-1)]
+    activity_by_day={d:0 for d in day_keys}
+    for row in audits:
+        if not row.created_at:continue
+        key=row.created_at.astimezone(UTC).date().isoformat()
+        if key in activity_by_day:activity_by_day[key]+=1
+    activity_series=[{"date":d,"count":activity_by_day[d]} for d in day_keys]
+
+    pending=sum(x.amount_cents for x in receivables if x.status=="pending")
+    overdue=sum(x.amount_cents for x in receivables if x.status=="pending" and x.due_date<date.today())
+    paid=sum(x.amount_cents for x in receivables if x.status=="paid")
+
     return {
         "crm":{"opportunities":len(opportunities),"pipeline_cents":sum(x.value_cents for x in opportunities),"won":sum(1 for x in opportunities if x.stage=="won")},
-        "finance":{"pending_cents":sum(x.amount_cents for x in receivables if x.status=="pending"),"overdue_cents":sum(x.amount_cents for x in receivables if x.status=="pending" and x.due_date<date.today()),"paid_cents":sum(x.amount_cents for x in receivables if x.status=="paid")},
+        "finance":{"pending_cents":pending,"overdue_cents":overdue,"paid_cents":paid},
         "operations":{"active_agents":sum(1 for x in agents_rows if x.status=="active"),"open_threads":sum(1 for x in threads if x.status=="open"),"unread_messages":sum(x.unread_count for x in threads),"campaigns":len(campaigns)},
         "marketing":{"interests_7d":len(mkt_leads),"leads_7d":sum(1 for x in mkt_leads if x.contact_id),"opportunities_7d":sum(1 for x in mkt_leads if x.opportunity_id)},
+        "charts":{
+            "crm_funnel":crm_funnel,
+            "finance_mix":[
+                {"key":"paid","label":"Recebido","cents":paid},
+                {"key":"pending","label":"Em aberto","cents":max(pending-overdue,0)},
+                {"key":"overdue","label":"Em atraso","cents":overdue},
+            ],
+            "activity_7d":activity_series,
+        },
     }
+
+def _human_activity(action:str,resource:str,detail:str|None)->tuple[str,str]:
+    d=(detail or "").strip()
+    money_hint=""
+    if ":" in d and d.rsplit(":",1)[-1].isdigit():
+        name,cents=d.rsplit(":",1)
+        try:
+            value=int(cents)/100
+            money_hint=f"{name} · R$ {value:.2f}".replace(".", ",")
+        except ValueError:
+            money_hint=d
+    labels={
+        "opportunity.created":("Nova oportunidade no CRM",d or "Negócio registrado"),
+        "agent.created":("Agente adicionado à equipe",d or "Novo agente"),
+        "agent.status_changed":("Status de agente atualizado",d.replace(":"," → ") if d else "Alteração de status"),
+        "agent.queried":("Consulta a um agente",d or "Pergunta respondida"),
+        "knowledge.ingested":("Conteúdo publicado na base",d.split(":")[0] if d else "Novo documento"),
+        "settings.llm_updated":("Inteligência (IA) conectada",d or "Chave atualizada"),
+        "receivable.created":("Cobrança lançada",d or "Novo recebível"),
+        "receivable.paid":("Pagamento recebido",money_hint or d or "Recebimento confirmado"),
+        "campaign.created":("Campanha criada",d or "Nova campanha"),
+        "campaign.status_changed":("Campanha atualizada",d.replace(":"," → ") if d else "Status alterado"),
+        "message.sent":("Mensagem enviada no WhatsApp",d or "Envio"),
+        "message.received":("Mensagem recebida no WhatsApp",d or "Entrada"),
+        "marketing.diagnosis_saved":("Marketing: diagnóstico salvo","Playbook Essencial"),
+        "marketing.discovery_saved":("Marketing: descoberta salva","Playbook Essencial"),
+        "marketing.plan_generated":("Plano de Marketing gerado",d or "Plano Essencial"),
+        "marketing.posts_materialized":("Peças publicadas como campanhas",f"{d} peça(s)" if d else "Campanhas criadas"),
+        "marketing.lead_handed_off":("Interesse virando oportunidade",d or "Handoff comercial"),
+        "marketing.crisis_escalated":("Crise de marketing escalada",d or "Atenção necessária"),
+        "marketing.governance_updated":("Governança de marketing atualizada","Teto e regras"),
+        "marketing.spend_requested":("Pedido de verba de anúncio",d or "Aguardando aprovação"),
+        "marketing.spend_reviewed":("Verba de anúncio revisada",d or "Decisão registrada"),
+        "marketing.engagement_logged":("Engajamento registrado",d or "Métrica"),
+        "marketing.package_upgraded":("Pacote de Marketing atualizado",d or "Upgrade"),
+        "billing.checkout":("Assinatura / checkout",d or "Billing"),
+        "team.member_created":("Membro adicionado à equipe",d or "Novo acesso"),
+        "team.member_updated":("Equipe atualizada",d or "Permissão alterada"),
+    }
+    title,summary=labels.get(action,(action.replace("."," · ").replace("_"," "),d or resource))
+    return title,summary
 
 @router.get("/analytics/activity")
 async def analytics_activity(p:Annotated[Principal,Depends(current_principal)],db:Db):
     rows=(await db.scalars(select(AuditLog).where(AuditLog.organization_id==p.organization_id).order_by(AuditLog.created_at.desc()).limit(20))).all()
-    return [{"id":str(x.id),"action":x.action,"resource":x.resource,"detail":x.detail,"created_at":x.created_at} for x in rows]
+    out=[]
+    for x in rows:
+        title,summary=_human_activity(x.action,x.resource,x.detail)
+        out.append({
+            "id":str(x.id),
+            "action":x.action,
+            "resource":x.resource,
+            "detail":x.detail,
+            "title":title,
+            "summary":summary,
+            "created_at":x.created_at,
+        })
+    return out
 
 @router.get("/team/members")
 async def team_members(p:Annotated[Principal,Depends(current_principal)],db:Db):
