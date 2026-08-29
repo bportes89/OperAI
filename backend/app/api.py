@@ -22,7 +22,7 @@ from app.models import (
 )
 from app.rag import embed_text,retrieve
 from app.schemas import (
-    AgentFromPresetIn,AgentIn,AgentQueryIn,AgentStatusIn,CampaignIn,CampaignStatusIn,ChannelIn,CheckoutIn,
+    AgentFromPresetIn,AgentIn,AgentQueryIn,AgentStatusIn,CampaignIn,CampaignSpendRequestIn,CampaignStatusIn,ChannelIn,CheckoutIn,
     EvolutionConnectIn,IncomingMessageIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,MetaConnectIn,
     MarketingDiagnosisIn,MarketingDiscoveryIn,MarketingEngagementIn,MarketingGovernanceIn,MarketingLeadIn,MarketingPackageIn,MarketingSpendIn,
     MarketingSpendReviewIn,OnboardingUpdateIn,OpportunityIn,OpportunityStageIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
@@ -1187,6 +1187,38 @@ async def change_campaign_status(campaign_id:str,data:CampaignStatusIn,p:Annotat
     db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="campaign.status_changed",resource="marketing_campaign",detail=f"{item.name}:{data.status}"))
     await db.commit();return {"id":str(item.id),"status":item.status}
 
+@router.post("/marketing/campaigns/{campaign_id}/request-spend",status_code=201)
+async def campaign_request_spend(campaign_id:str,data:CampaignSpendRequestIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER))],db:Db):
+    """Pede verba de anúncio a partir de uma campanha google_ads/meta_ads (usa teto de governança)."""
+    await require_billing_access(p.organization_id,db)
+    item=await db.scalar(select(MarketingCampaign).where(and_(MarketingCampaign.id==parse_uuid(campaign_id,"Campaign"),MarketingCampaign.organization_id==p.organization_id)))
+    if not item:raise HTTPException(404,"Campaign not found")
+    if item.channel not in {"google_ads","meta_ads"}:
+        raise HTTPException(409,"Só campanhas de Ads (Google/Meta) pedem verba por aqui")
+    gov=await _get_or_create_governance(p.organization_id,p.user_id,db)
+    remaining=max(0,gov.monthly_ad_ceiling_cents-gov.spent_cents)
+    needs_approval=data.amount_cents>remaining
+    status="pending" if needs_approval else "approved"
+    desc=(data.description or f"Verba para campanha: {item.name}")[:240]
+    req=MarketingSpendRequest(
+        organization_id=p.organization_id,created_by=p.user_id,
+        channel=item.channel,description=desc,amount_cents=data.amount_cents,status=status,
+    )
+    if status=="approved":
+        gov.spent_cents=int(gov.spent_cents)+data.amount_cents
+        req.reviewed_by=p.user_id;req.reviewed_at=datetime.now(UTC)
+    db.add(req)
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="marketing.spend_requested",resource="marketing_spend",detail=f"{status}:{data.amount_cents}:{item.id}"))
+    await db.commit();await db.refresh(req)
+    return {
+        "id":str(req.id),
+        "status":req.status,
+        "needs_owner_approval":needs_approval,
+        "remaining_cents":max(0,gov.monthly_ad_ceiling_cents-gov.spent_cents),
+        "campaign_id":str(item.id),
+        "governance_path":"/app/marketing",
+    }
+
 def _playbook_out(item:MarketingPlaybook)->dict:
     return {
         "id":str(item.id),
@@ -1311,8 +1343,9 @@ async def generate_marketing_playbook(p:Annotated[Principal,Depends(require_role
         "### RESUMO\n(um parágrafo do as-is)\n"
         "### PLANO\n(plano 30 dias com priorização de canais e investimento)\n"
         "### POSTS\n"
-        "1. Título | canal(social|email|whatsapp) | público | texto com CTA\n"
+        "1. Título | canal(social|email|whatsapp|google_ads) | público | texto com CTA\n"
         "2. ...\n3. ...\n4. ...\n"
+        "Se houver orçamento mensal > 0 na descoberta, inclua no máximo 1 peça google_ads (texto de anúncio de busca: título + descrição + CTA). "
         "Não sugira Ads pagos se o orçamento for zero ou muito baixo.\n\n"
         f"DIAGNÓSTICO:\n{item.diagnosis}\n\nDESCOBERTA:\n{item.discovery}"
     )
@@ -1334,10 +1367,7 @@ async def generate_marketing_playbook(p:Annotated[Principal,Depends(require_role
                     line=line.split(".",1)[-1].strip()
                     bits=[b.strip() for b in line.split("|")]
                     if len(bits)>=4:
-                        ch=bits[1].lower()
-                        if "whatsapp" in ch:ch="whatsapp"
-                        elif "email" in ch or "e-mail" in ch:ch="email"
-                        else:ch="social"
+                        ch=_normalize_campaign_channel(bits[1])
                         parsed.append({"title":bits[0][:180],"channel":ch,"audience":bits[2][:240],"content":"|".join(bits[3:])[:12000]})
                 if len(parsed)>=2:posts=parsed[:4]
     elif mode.startswith("byok") and answer.strip():
@@ -1358,6 +1388,58 @@ async def generate_marketing_playbook(p:Annotated[Principal,Depends(require_role
     await db.commit();await db.refresh(item)
     return _playbook_out(item)
 
+@router.post("/marketing/playbook/posts/{post_index}/regenerate")
+async def regenerate_marketing_post(post_index:int,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER))],db:Db):
+    """Reescreve uma única peça com IA, mantendo as demais."""
+    await require_billing_access(p.organization_id,db)
+    if post_index<0:raise HTTPException(422,"Índice inválido")
+    item=await _get_or_create_playbook(p,db)
+    posts=list(item.posts or [])
+    if post_index>=len(posts):raise HTTPException(404,"Peça não encontrada")
+    if not item.diagnosis or not item.discovery:raise HTTPException(409,"Diagnóstico e descoberta são obrigatórios")
+    current=posts[post_index] if isinstance(posts[post_index],dict) else {}
+    agent=await _ensure_marketing_agent(p.organization_id,p.user_id,db)
+    item.agent_id=agent.id
+    rows=(await db.execute(select(KnowledgeChunk,KnowledgeDocument.title).join(KnowledgeDocument,KnowledgeDocument.id==KnowledgeChunk.document_id).where(KnowledgeChunk.organization_id==p.organization_id))).all()
+    sources=retrieve(f"peça marketing {current.get('title','')}",list(rows),4) if rows else []
+    ch=str(current.get("channel") or "social")
+    question=(
+        "Reescreva UMA peça de marketing em português brasileiro. "
+        "Mantenha o canal e o público, melhore clareza e CTA qualificável.\n"
+        "Responda em UMA linha no formato:\n"
+        "Título | canal | público | texto com CTA\n"
+        f"Canal desejado: {ch}\n"
+        f"Peça atual: {current}\n\n"
+        f"DIAGNÓSTICO:\n{item.diagnosis}\n\nDESCOBERTA:\n{item.discovery}"
+    )
+    answer,mode=await _org_llm_answer(p.organization_id,agent,question,sources,db)
+    updated={
+        "title":str(current.get("title") or "Peça")[:180],
+        "channel":_normalize_campaign_channel(ch),
+        "audience":str(current.get("audience") or "público-alvo")[:240],
+        "content":str(current.get("content") or "")[:12000],
+    }
+    line=next((ln.strip() for ln in answer.splitlines() if "|" in ln),answer.strip())
+    if "|" in line:
+        bits=[b.strip() for b in line.split("|")]
+        if len(bits)>=4:
+            updated={
+                "title":bits[0][:180] or updated["title"],
+                "channel":_normalize_campaign_channel(bits[1] or ch),
+                "audience":bits[2][:240] or updated["audience"],
+                "content":"|".join(bits[3:])[:12000] or updated["content"],
+            }
+        elif mode.startswith("byok") and answer.strip():
+            updated["content"]=answer.strip()[:12000]
+    elif mode.startswith("byok") and answer.strip():
+        updated["content"]=answer.strip()[:12000]
+    posts[post_index]=updated
+    item.posts=posts
+    item.updated_at=datetime.now(UTC)
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="marketing.post_regenerated",resource="marketing_playbook",detail=f"{post_index}:{updated['title']}"))
+    await db.commit();await db.refresh(item)
+    return {"index":post_index,"post":updated,"playbook":_playbook_out(item),"mode":mode}
+
 @router.post("/marketing/playbook/materialize")
 async def materialize_marketing_posts(p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER))],db:Db):
     await require_billing_access(p.organization_id,db)
@@ -1365,8 +1447,7 @@ async def materialize_marketing_posts(p:Annotated[Principal,Depends(require_role
     if not item.posts:raise HTTPException(409,"Gere o plano antes de criar campanhas")
     created=[]
     for post in item.posts:
-        ch=post.get("channel") or "social"
-        if ch not in {"whatsapp","email","social"}:ch="social"
+        ch=_normalize_campaign_channel(post.get("channel") or "social")
         campaign=MarketingCampaign(
             organization_id=p.organization_id,
             created_by=p.user_id,
@@ -1381,6 +1462,16 @@ async def materialize_marketing_posts(p:Annotated[Principal,Depends(require_role
     db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="marketing.posts_materialized",resource="marketing_playbook",detail=str(len(created))))
     await db.commit()
     return {"created":len(created),"campaigns":[{"id":str(c.id),"name":c.name,"channel":c.channel,"status":c.status} for c in created]}
+
+def _normalize_campaign_channel(raw:str)->str:
+    ch=(raw or "social").lower().strip()
+    if ch in {"google_ads","meta_ads","whatsapp","email","social"}:return ch
+    if "google" in ch:return "google_ads"
+    if ("meta" in ch or "facebook" in ch) and ("ads" in ch or "anúncio" in ch or "anuncio" in ch):return "meta_ads"
+    if "ads" in ch or "anúncio" in ch or "anuncio" in ch:return "google_ads"
+    if "whatsapp" in ch:return "whatsapp"
+    if "email" in ch or "e-mail" in ch:return "email"
+    return "social"
 
 def _normalize_phone(value:str|None)->str|None:
     if not value:return None
@@ -1887,6 +1978,7 @@ def _human_activity(action:str,resource:str,detail:str|None)->tuple[str,str]:
         "marketing.discovery_saved":("Marketing: descoberta salva","Playbook Essencial"),
         "marketing.plan_generated":("Plano de Marketing gerado",d or "Plano Essencial"),
         "marketing.posts_materialized":("Peças publicadas como campanhas",f"{d} peça(s)" if d else "Campanhas criadas"),
+        "marketing.post_regenerated":("Peça de marketing reescrita com IA",d or "Regeneração"),
         "marketing.lead_handed_off":("Interesse virando oportunidade",d or "Handoff comercial"),
         "marketing.crisis_escalated":("Crise de marketing escalada",d or "Atenção necessária"),
         "marketing.governance_updated":("Governança de marketing atualizada","Teto e regras"),

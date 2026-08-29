@@ -33,6 +33,19 @@ const WIZARD_STEPS = [
   { key: "active", label: "4. Peças" },
 ] as const;
 
+const CHANNEL_LABEL: Record<string, string> = {
+  whatsapp: "WhatsApp",
+  email: "E-mail",
+  social: "Redes sociais",
+  google_ads: "Google Ads (busca)",
+  meta_ads: "Meta Ads",
+};
+
+function interestChannel(channel: string) {
+  if (channel === "whatsapp" || channel === "email") return channel;
+  return "social";
+}
+
 function stepIndex(step: string) {
   const i = WIZARD_STEPS.findIndex((s) => s.key === step);
   return i < 0 ? 0 : i;
@@ -147,6 +160,63 @@ export default function MarketingPage() {
       });
       await load();
       setView("campaigns");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function regeneratePost(index: number) {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await apiJson<{
+        playbook: MarketingPlaybook;
+        post: MarketingPost;
+      }>(`/api/v1/marketing/playbook/posts/${index}/regenerate`, {
+        method: "POST",
+        body: "{}",
+      });
+      setPlaybook(result.playbook);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function requestCampaignSpend(item: Campaign) {
+    const raw = window.prompt(
+      "Valor da verba de anúncio (R$):",
+      "100",
+    );
+    if (!raw) return;
+    const amount = Math.round(Number(raw.replace(",", ".")) * 100);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError("Informe um valor válido em reais.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const result = await apiJson<{
+        status: string;
+        needs_owner_approval: boolean;
+      }>(`/api/v1/marketing/campaigns/${item.id}/request-spend`, {
+        method: "POST",
+        body: JSON.stringify({ amount_cents: amount }),
+      });
+      await load();
+      setView("governance");
+      if (result.needs_owner_approval) {
+        setError("");
+        window.alert(
+          "Pedido acima do teto — aguardando aprovação do dono na Governança.",
+        );
+      } else {
+        window.alert("Verba registrada dentro do teto (aprovada automaticamente).");
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -738,17 +808,23 @@ export default function MarketingPage() {
                         <div>
                           <strong>{post.title}</strong>
                           <small>
-                            {post.channel} · {post.audience}
+                            {CHANNEL_LABEL[post.channel] ?? post.channel} ·{" "}
+                            {post.audience}
                           </small>
                         </div>
                         <p>{post.content}</p>
+                        <div className="proposal-actions" style={{ marginBottom: 8 }}>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void regeneratePost(idx)}
+                          >
+                            {busy ? "Reescrevendo…" : "Regenerar peça (IA)"}
+                          </button>
+                        </div>
                         {interestForm(`post-${idx}`, {
                           title: post.title,
-                          channel:
-                            post.channel === "whatsapp" ||
-                            post.channel === "email"
-                              ? post.channel
-                              : "social",
+                          channel: interestChannel(post.channel),
                         })}
                       </div>
                     ))}
@@ -788,7 +864,8 @@ export default function MarketingPage() {
                   <div>
                     <strong>{item.name}</strong>
                     <small>
-                      {item.channel} · {item.audience}
+                      {CHANNEL_LABEL[item.channel] ?? item.channel} ·{" "}
+                      {item.audience}
                     </small>
                   </div>
                   <span className={`finance-status ${item.status}`}>
@@ -810,13 +887,22 @@ export default function MarketingPage() {
                         {CAMPAIGN_STATUS_LABELS[next] ?? next}
                       </button>
                     ))}
+                    {(item.channel === "google_ads" ||
+                      item.channel === "meta_ads") &&
+                      item.status !== "cancelled" && (
+                        <button
+                          type="button"
+                          className="primary"
+                          disabled={busy}
+                          onClick={() => void requestCampaignSpend(item)}
+                        >
+                          Pedir verba de anúncio
+                        </button>
+                      )}
                   </div>
                   {interestForm(`camp-${item.id}`, {
                     title: item.name,
-                    channel:
-                      item.channel === "whatsapp" || item.channel === "email"
-                        ? item.channel
-                        : "social",
+                    channel: interestChannel(item.channel),
                     campaignId: item.id,
                   })}
                 </div>
@@ -842,6 +928,8 @@ export default function MarketingPage() {
                   <option value="whatsapp">WhatsApp</option>
                   <option value="email">E-mail</option>
                   <option value="social">Redes sociais</option>
+                  <option value="google_ads">Google Ads (busca paga)</option>
+                  <option value="meta_ads">Meta Ads</option>
                 </select>
               </label>
               <label>

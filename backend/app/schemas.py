@@ -104,7 +104,7 @@ class TeamMemberUpdateIn(BaseModel):
 
 class CampaignIn(BaseModel):
     name:str=Field(min_length=2,max_length=180)
-    channel:str=Field(pattern=r"^(whatsapp|email|social)$")
+    channel:str=Field(pattern=r"^(whatsapp|email|social|google_ads|meta_ads)$")
     audience:str=Field(min_length=2,max_length=240)
     content:str=Field(min_length=5,max_length=12000)
     scheduled_at:datetime|None=None
@@ -112,6 +112,10 @@ class CampaignIn(BaseModel):
 
 class CampaignStatusIn(BaseModel):
     status:str=Field(pattern=r"^(draft|approved|scheduled|running|completed|cancelled)$")
+
+class CampaignSpendRequestIn(BaseModel):
+    amount_cents:int=Field(gt=0)
+    description:str|None=Field(default=None,max_length=240)
 
 class MarketingDiagnosisIn(BaseModel):
     channels_active:str=Field(min_length=2,max_length=2000)
