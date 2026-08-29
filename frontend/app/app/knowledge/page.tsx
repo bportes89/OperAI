@@ -72,12 +72,25 @@ export default function KnowledgePage() {
       return;
     }
     try {
-      await apiJson("/api/v1/knowledge/documents/upload", {
+      const result = await apiJson<{
+        title?: string;
+        chunk_count?: number;
+        ocr?: boolean;
+        meta?: { note?: string; pages?: number };
+      }>("/api/v1/knowledge/documents/upload", {
         method: "POST",
         body: fd,
       });
       form.reset();
-      setMessage(`Arquivo “${file.name}” publicado na base.`);
+      if (result.ocr) {
+        setMessage(
+          `Arquivo “${result.title ?? file.name}” lido por OCR` +
+            (result.meta?.pages ? ` (${result.meta.pages} pág.)` : "") +
+            ` · ${result.chunk_count ?? "?"} trechos publicados.`,
+        );
+      } else {
+        setMessage(`Arquivo “${file.name}” publicado na base.`);
+      }
       await load();
       await markFaqDone();
     } catch (e) {
@@ -178,8 +191,9 @@ export default function KnowledgePage() {
               </div>
             </div>
             <p style={{ marginTop: 0, opacity: 0.85, lineHeight: 1.5 }}>
-              Extraímos o texto automaticamente (até 5 MB). PDFs só-imagem
-              (escaneados) não funcionam sem OCR — nesse caso, cole o texto.
+              Extraímos o texto automaticamente (até 5 MB). PDF com texto
+              selecionável é o mais rápido; PDF escaneado usa OCR (até 15
+              páginas, pt/en) — pode levar alguns segundos.
             </p>
             <form onSubmit={uploadDocument}>
               <label>
@@ -196,7 +210,7 @@ export default function KnowledgePage() {
                 />
               </label>
               <button className="primary" disabled={busy}>
-                {busy ? "Publicando…" : "Publicar arquivo"}
+                {busy ? "Lendo e publicando…" : "Publicar arquivo"}
               </button>
             </form>
           </article>

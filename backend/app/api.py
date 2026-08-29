@@ -515,18 +515,29 @@ async def upload_knowledge_document(
     await require_billing_access(p.organization_id,db)
     raw=await file.read()
     try:
-        content,source_type=extract_text_from_upload(file.filename or "arquivo.pdf",raw)
+        content,source_type,meta=extract_text_from_upload(file.filename or "arquivo.pdf",raw)
     except ValueError as exc:
         raise HTTPException(422,str(exc)) from exc
     doc_title=(title or "").strip() or (file.filename or "Documento").rsplit(".",1)[0][:180]
     if len(doc_title)<2:doc_title="Documento da empresa"
+    if meta.get("ocr"):
+        doc_title=f"{doc_title} (OCR)"[:180]
     parts=split_content(content)
     item=KnowledgeDocument(organization_id=p.organization_id,title=doc_title,source_type=source_type,content=content,chunk_count=len(parts))
     db.add(item);await db.flush()
     db.add_all([KnowledgeChunk(organization_id=p.organization_id,document_id=item.id,position=i,content=part,embedding=embed_text(part)) for i,part in enumerate(parts)])
-    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="knowledge.ingested",resource="knowledge_document",detail=f"{doc_title}:{len(parts)} chunks:{source_type}"))
+    ocr_flag="ocr" if meta.get("ocr") else "text"
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="knowledge.ingested",resource="knowledge_document",detail=f"{doc_title}:{len(parts)} chunks:{source_type}:{ocr_flag}"))
     await db.commit()
-    return {"id":str(item.id),"title":item.title,"chunk_count":len(parts),"status":item.status,"source_type":item.source_type}
+    return {
+        "id":str(item.id),
+        "title":item.title,
+        "chunk_count":len(parts),
+        "status":item.status,
+        "source_type":item.source_type,
+        "ocr":bool(meta.get("ocr")),
+        "meta":meta,
+    }
 
 @router.get("/knowledge/search")
 async def search_knowledge(q:str,p:Annotated[Principal,Depends(current_principal)],db:Db):
