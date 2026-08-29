@@ -319,7 +319,15 @@ export type OnboardingState = {
     llm?: boolean;
     faq?: boolean;
     whatsapp?: boolean;
+    agent?: boolean;
     [key: string]: boolean | undefined;
+  };
+  detected?: {
+    account?: boolean;
+    llm?: boolean;
+    faq?: boolean;
+    whatsapp?: boolean;
+    agent?: boolean;
   };
 };
 

@@ -34,7 +34,7 @@ function onboardingDone(state: OnboardingState | null) {
   if (!state) return true;
   if (state.completed_at) return true;
   const c = state.checklist ?? {};
-  return Boolean(c.account && c.llm && c.faq && c.whatsapp);
+  return Boolean(c.account && c.llm && c.faq && c.whatsapp && c.agent);
 }
 
 export default function AppLayout({ children }: { children: ReactNode }) {

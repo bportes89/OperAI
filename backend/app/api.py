@@ -414,7 +414,8 @@ async def _onboarding_detected(org_id:uuid.UUID,db:AsyncSession)->dict:
     llm_ok=await db.scalar(select(LlmCredential.id).where(LlmCredential.organization_id==org_id).limit(1))
     faq_ok=await db.scalar(select(KnowledgeDocument.id).where(KnowledgeDocument.organization_id==org_id).limit(1))
     wa_ok=await db.scalar(select(Channel.id).where(and_(Channel.organization_id==org_id,Channel.active.is_(True))).limit(1))
-    return {"account":True,"llm":bool(llm_ok),"faq":bool(faq_ok),"whatsapp":bool(wa_ok)}
+    agent_ok=await db.scalar(select(Agent.id).where(and_(Agent.organization_id==org_id,Agent.agent_type=="whatsapp",Agent.status=="active")).limit(1))
+    return {"account":True,"llm":bool(llm_ok),"faq":bool(faq_ok),"whatsapp":bool(wa_ok),"agent":bool(agent_ok)}
 
 @router.get("/settings/onboarding")
 async def get_onboarding(p:Annotated[Principal,Depends(current_principal)],db:Db):
@@ -429,13 +430,22 @@ async def get_onboarding(p:Annotated[Principal,Depends(current_principal)],db:Db
         "llm":detected["llm"],
         "faq":detected["faq"],
         "whatsapp":detected["whatsapp"],
+        "agent":detected["agent"],
     }
-    if all(checklist.values()) and not row.completed_at:
-        row.completed_at=datetime.now(UTC);row.step="done";row.checklist=checklist
-        await db.commit();await db.refresh(row)
-    elif checklist!= (row.checklist or {}):
+    if all(checklist.values()):
+        if not row.completed_at:
+            row.completed_at=datetime.now(UTC)
+        row.step="done"
         row.checklist=checklist
         await db.commit();await db.refresh(row)
+    else:
+        # Novo requisito (ex.: agente) reabre o setup se ainda faltava algo
+        changed=checklist!=(row.checklist or {}) or row.completed_at is not None
+        if changed:
+            row.checklist=checklist
+            row.completed_at=None
+            if row.step=="done":row.step="agent"
+            await db.commit();await db.refresh(row)
     return {"step":row.step,"completed_at":row.completed_at,"checklist":checklist,"detected":detected}
 
 @router.patch("/settings/onboarding")
@@ -450,15 +460,42 @@ async def patch_onboarding(data:OnboardingUpdateIn,p:Annotated[Principal,Depends
         "llm":detected["llm"],
         "faq":detected["faq"],
         "whatsapp":detected["whatsapp"],
+        "agent":detected["agent"],
     }
     row.checklist=checklist
     if data.step is not None:row.step=data.step
     if all(checklist.values()):
         row.completed_at=datetime.now(UTC);row.step="done"
-    elif data.completed is True and not all(checklist.values()):
-        raise HTTPException(409,"Conclua inteligência, base da empresa e WhatsApp de verdade antes de finalizar.")
+    else:
+        row.completed_at=None
+        if data.completed is True:
+            raise HTTPException(409,"Conclua inteligência, base, WhatsApp e agente de atendimento antes de finalizar.")
     await db.commit()
     return {"step":row.step,"completed_at":row.completed_at,"checklist":checklist,"detected":detected}
+
+@router.post("/settings/onboarding/activate-whatsapp-agent",status_code=201)
+async def activate_onboarding_whatsapp_agent(p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER))],db:Db):
+    """Atalho do setup: cria/ativa o agente de Atendimento WhatsApp."""
+    await require_billing_access(p.organization_id,db)
+    preset=next((x for x in llm.AGENT_PRESETS if x["id"]=="whatsapp"),None)
+    if not preset:raise HTTPException(404,"Preset WhatsApp não encontrado")
+    existing=await db.scalar(select(Agent).where(and_(Agent.organization_id==p.organization_id,Agent.agent_type=="whatsapp")).order_by(Agent.created_at.asc()))
+    if existing:
+        if existing.status!="active":
+            existing.status="active"
+            db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="agent.status_changed",resource="agent",detail=f"{existing.name}:active"))
+        await db.commit();await db.refresh(existing)
+        return _agent_out(existing)
+    item=Agent(
+        organization_id=p.organization_id,
+        name=preset["name"],
+        agent_type="whatsapp",
+        status="active",
+        instructions=preset["instructions"],
+    )
+    db.add_all([item,AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="agent.created",resource="agent",detail="preset:whatsapp:onboarding")])
+    await db.commit();await db.refresh(item)
+    return _agent_out(item)
 
 def _opportunity_out(x:Opportunity,campaign_name:str|None=None,lead_source:tuple[str|None,str|None]|None=None)->dict:
     source_title=x.source_title

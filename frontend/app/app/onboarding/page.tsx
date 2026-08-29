@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { apiJson } from "../../lib/api";
-import type { OnboardingState } from "../../lib/types";
+import type { Agent, OnboardingState } from "../../lib/types";
 
 type Step = {
   key: keyof OnboardingState["checklist"];
@@ -30,31 +30,42 @@ const STEPS: Step[] = [
       "Cole a chave do provedor de IA (OpenAI, Groq ou OpenRouter). Sem isso, as respostas ficam limitadas.",
     href: "/app/settings/llm",
     cta: "Guia passo a passo",
-    tip: "Não inventamos jargão: o assistente explica onde clicar para pegar a chave.",
+    tip: "O assistente explica onde clicar para pegar a chave.",
   },
   {
     key: "faq",
     title: "3. Base da empresa",
     description:
-      "Publique FAQ, políticas e preços. É o que os agentes usam para falar como a sua empresa.",
+      "Publique FAQ, políticas e preços (texto ou PDF/Word). É o que os agentes usam para falar como a sua empresa.",
     href: "/app/knowledge",
     cta: "Adicionar conteúdo",
-    tip: "Comece colando um FAQ curto — depois evoluímos para PDF/Word.",
+    tip: "Comece com um FAQ curto; PDF escaneado também funciona via OCR.",
   },
   {
     key: "whatsapp",
     title: "4. Canal de atendimento",
     description:
-      "Conecte o WhatsApp para conversas entrarem na OperAI. Hoje usa Evolution ou webhook.",
+      "Conecte o WhatsApp (Meta oficial ou Evolution) para as conversas entrarem na OperAI.",
     href: "/app/inbox",
     cta: "Abrir WhatsApp / Inbox",
-    tip: "A verificação da conta nas plataformas sempre é feita por você (dono).",
+    tip: "A verificação nas plataformas é sempre feita por você (dono).",
+  },
+  {
+    key: "agent",
+    title: "5. Ativar agente WhatsApp",
+    description:
+      "Sem o agente de Atendimento ativo, o canal recebe mensagem mas a IA não responde.",
+    href: "/app/agents",
+    cta: "Ver agentes",
+    tip: "Um clique abaixo cria e ativa o agente pronto para PME.",
   },
 ];
 
 export default function OnboardingPage() {
   const [state, setState] = useState<OnboardingState | null>(null);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -66,7 +77,13 @@ export default function OnboardingPage() {
       setState({
         step: "welcome",
         completed_at: null,
-        checklist: { account: true, llm: false, faq: false, whatsapp: false },
+        checklist: {
+          account: true,
+          llm: false,
+          faq: false,
+          whatsapp: false,
+          agent: false,
+        },
       });
     }
   }, []);
@@ -74,6 +91,26 @@ export default function OnboardingPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  async function activateWhatsappAgent() {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const agent = await apiJson<Agent>(
+        "/api/v1/settings/onboarding/activate-whatsapp-agent",
+        { method: "POST", body: "{}" },
+      );
+      setMessage(
+        `Agente “${agent.name}” ativo — mensagens no WhatsApp já podem ser respondidas pela IA.`,
+      );
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const checklist = state?.checklist ?? {};
   const doneCount = STEPS.filter((s) => checklist[s.key]).length;
@@ -90,17 +127,18 @@ export default function OnboardingPage() {
         </div>
       </header>
       {error && <p className="error">{error}</p>}
+      {message && <p className="success">{message}</p>}
       {state?.completed_at && (
         <p className="success">
-          Setup completo — inteligência, base e canal detectados de verdade.
+          Setup completo — IA, base, canal e agente de atendimento detectados.
         </p>
       )}
 
       <article className="panel" style={{ marginBottom: 16 }}>
         <p style={{ margin: 0, lineHeight: 1.55, opacity: 0.9 }}>
           Os passos abaixo são <strong>validados automaticamente</strong>: não
-          adianta só marcar como feito. Quando você conectar a IA, publicar a
-          base ou o WhatsApp, o checklist atualiza sozinho.
+          adianta só marcar como feito. Quando conectar a IA, publicar a base,
+          o WhatsApp e ativar o agente, o checklist atualiza sozinho.
         </p>
       </article>
 
@@ -119,7 +157,7 @@ export default function OnboardingPage() {
             const done = Boolean(checklist[step.key]);
             return (
               <div
-                key={step.key}
+                key={String(step.key)}
                 className={`check-item${done ? " done" : ""}`}
               >
                 <div className="check-dot">{done ? "✓" : ""}</div>
@@ -128,7 +166,9 @@ export default function OnboardingPage() {
                   <small style={{ display: "block", color: "#a0a0a8" }}>
                     {step.description}
                   </small>
-                  <small style={{ display: "block", color: "#7a7a84", marginTop: 4 }}>
+                  <small
+                    style={{ display: "block", color: "#7a7a84", marginTop: 4 }}
+                  >
                     {step.tip}
                   </small>
                   {done && (
@@ -144,7 +184,20 @@ export default function OnboardingPage() {
                   )}
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Link className={done ? "secondary" : "primary"} href={step.href}>
+                  {step.key === "agent" && !done ? (
+                    <button
+                      type="button"
+                      className="primary"
+                      disabled={busy}
+                      onClick={() => void activateWhatsappAgent()}
+                    >
+                      {busy ? "Ativando…" : "Ativar agente agora"}
+                    </button>
+                  ) : null}
+                  <Link
+                    className={done ? "secondary" : step.key === "agent" ? "secondary" : "primary"}
+                    href={step.href}
+                  >
                     {done ? "Revisar" : step.cta}
                   </Link>
                 </div>
