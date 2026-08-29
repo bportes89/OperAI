@@ -1,12 +1,27 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { apiJson } from "../../lib/api";
-import { money } from "../../lib/format";
-import type { FinanceSummary, Receivable } from "../../lib/types";
+import { formatDateTime, money } from "../../lib/format";
+import type { FinanceFollowUp, FinanceSummary, Receivable } from "../../lib/types";
+
+const STATUS_LABEL: Record<string, string> = {
+  pending: "Em aberto",
+  overdue: "Em atraso",
+  paid: "Pago",
+};
+
+const TONE_LABEL: Record<string, string> = {
+  reminder: "Lembrete prévio",
+  due_today: "Vence hoje",
+  overdue_soft: "Atraso recente",
+  negotiate: "Negociação",
+};
 
 export default function FinancePage() {
   const [receivables, setReceivables] = useState<Receivable[]>([]);
+  const [followUps, setFollowUps] = useState<FinanceFollowUp[]>([]);
   const [summary, setSummary] = useState<FinanceSummary>({
     pending_cents: 0,
     overdue_cents: 0,
@@ -14,17 +29,22 @@ export default function FinancePage() {
     total_count: 0,
   });
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [draftingId, setDraftingId] = useState<string | null>(null);
+  const [lastDraft, setLastDraft] = useState<string>("");
 
   const load = useCallback(async () => {
     try {
       setError("");
-      const [list, sum] = await Promise.all([
+      const [list, sum, drafts] = await Promise.all([
         apiJson<Receivable[]>("/api/v1/finance/receivables"),
         apiJson<FinanceSummary>("/api/v1/finance/summary"),
+        apiJson<FinanceFollowUp[]>("/api/v1/finance/follow-ups").catch(() => []),
       ]);
       setReceivables(list);
       setSummary(sum);
+      setFollowUps(drafts);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -74,6 +94,56 @@ export default function FinancePage() {
     }
   }
 
+  async function draftFollowUp(item: Receivable) {
+    setDraftingId(item.id);
+    setError("");
+    setMessage("");
+    try {
+      const result = await apiJson<{ message: string; tone?: string }>(
+        `/api/v1/finance/receivables/${item.id}/follow-up`,
+        { method: "POST" },
+      );
+      setLastDraft(result.message);
+      setMessage(
+        `Lembrete pronto (${TONE_LABEL[result.tone ?? ""] ?? "follow-up"}). Copie e envie no WhatsApp.`,
+      );
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setDraftingId(null);
+    }
+  }
+
+  async function runBatchFollowUps() {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await apiJson<{ drafted: number; skipped: number }>(
+        "/api/v1/finance/follow-ups/run",
+        { method: "POST" },
+      );
+      setMessage(
+        `${result.drafted} lembrete(s) gerado(s)${result.skipped ? ` · ${result.skipped} ignorado(s)` : ""}.`,
+      );
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyText(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setMessage("Mensagem copiada.");
+    } catch {
+      setError("Não foi possível copiar. Selecione o texto manualmente.");
+    }
+  }
+
   return (
     <>
       <header>
@@ -81,8 +151,22 @@ export default function FinancePage() {
           <span>FINANCEIRO</span>
           <h1>Cobrança</h1>
         </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Link className="secondary" href="/app/agents">
+            Agente Cobrança
+          </Link>
+          <button
+            type="button"
+            className="primary"
+            disabled={busy}
+            onClick={() => void runBatchFollowUps()}
+          >
+            {busy ? "Gerando…" : "Rodar follow-ups"}
+          </button>
+        </div>
       </header>
       {error && <p className="error">{error}</p>}
+      {message && <p className="success">{message}</p>}
 
       <div className="metrics">
         <article>
@@ -102,6 +186,23 @@ export default function FinancePage() {
         </article>
       </div>
 
+      {lastDraft && (
+        <article className="panel" style={{ marginBottom: 18 }}>
+          <div className="panel-title">
+            <div>
+              <span>RASCUNHO</span>
+              <h2>Último lembrete gerado</h2>
+            </div>
+            <button type="button" onClick={() => void copyText(lastDraft)}>
+              Copiar
+            </button>
+          </div>
+          <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.55, margin: 0 }}>
+            {lastDraft}
+          </p>
+        </article>
+      )}
+
       <div className="content-grid">
         <article className="panel">
           <div className="panel-title">
@@ -110,6 +211,11 @@ export default function FinancePage() {
               <h2>Cobranças</h2>
             </div>
           </div>
+          <p style={{ marginTop: 0, opacity: 0.85, lineHeight: 1.5 }}>
+            O agente de Cobrança monta a mensagem no tom certo (lembrete →
+            atraso → negociação). Você revisa, copia e envia — sem inventar
+            valores.
+          </p>
           {receivables.length === 0 ? (
             <div className="empty">
               <strong>Nenhuma cobrança</strong>
@@ -129,53 +235,109 @@ export default function FinancePage() {
                 </div>
                 <b>{money(item.amount_cents)}</b>
                 <span className={`finance-status ${item.status}`}>
-                  {item.status}
+                  {STATUS_LABEL[item.status] ?? item.status}
                 </span>
                 {item.status !== "paid" && (
-                  <button type="button" onClick={() => void payReceivable(item)}>
-                    Baixar via Pix
-                  </button>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      disabled={draftingId === item.id}
+                      onClick={() => void draftFollowUp(item)}
+                    >
+                      {draftingId === item.id ? "Gerando…" : "Gerar lembrete"}
+                    </button>
+                    <button type="button" onClick={() => void payReceivable(item)}>
+                      Baixar via Pix
+                    </button>
+                  </div>
                 )}
               </div>
             ))
           )}
         </article>
 
-        <article className="panel">
-          <div className="panel-title">
-            <div>
-              <span>NOVA</span>
-              <h2>Lançar recebível</h2>
+        <div style={{ display: "grid", gap: 18 }}>
+          <article className="panel">
+            <div className="panel-title">
+              <div>
+                <span>AGENTE</span>
+                <h2>Follow-ups recentes</h2>
+              </div>
             </div>
-          </div>
-          <form onSubmit={createReceivable}>
-            <label>
-              Cliente
-              <input name="customer_name" required minLength={2} />
-            </label>
-            <label>
-              Descrição
-              <input name="description" required minLength={2} />
-            </label>
-            <label>
-              Valor (R$)
-              <input
-                name="amount"
-                type="number"
-                min="0.01"
-                step="0.01"
-                required
-              />
-            </label>
-            <label>
-              Vencimento
-              <input name="due_date" type="date" required />
-            </label>
-            <button className="primary" disabled={busy}>
-              Criar cobrança
-            </button>
-          </form>
-        </article>
+            {followUps.length === 0 ? (
+              <div className="empty">
+                <strong>Nenhum lembrete ainda</strong>
+                <p>
+                  Use &quot;Gerar lembrete&quot; ou &quot;Rodar follow-ups&quot;
+                  para títulos próximos do vencimento / atrasados.
+                </p>
+              </div>
+            ) : (
+              followUps.slice(0, 8).map((fu) => (
+                <div className="activity-row" key={fu.id} style={{ alignItems: "start" }}>
+                  <div className="activity-dot" />
+                  <div>
+                    <strong>
+                      {fu.customer_name || fu.title}
+                      {fu.tone ? ` · ${TONE_LABEL[fu.tone] ?? fu.tone}` : ""}
+                    </strong>
+                    <small style={{ whiteSpace: "pre-wrap" }}>
+                      {fu.message.length > 220
+                        ? `${fu.message.slice(0, 220)}…`
+                        : fu.message}
+                    </small>
+                    <button
+                      type="button"
+                      style={{ marginTop: 6 }}
+                      onClick={() => void copyText(fu.message)}
+                    >
+                      Copiar mensagem
+                    </button>
+                  </div>
+                  <time>
+                    {fu.created_at ? formatDateTime(fu.created_at) : ""}
+                  </time>
+                </div>
+              ))
+            )}
+          </article>
+
+          <article className="panel">
+            <div className="panel-title">
+              <div>
+                <span>NOVA</span>
+                <h2>Lançar recebível</h2>
+              </div>
+            </div>
+            <form onSubmit={createReceivable}>
+              <label>
+                Cliente
+                <input name="customer_name" required minLength={2} />
+              </label>
+              <label>
+                Descrição
+                <input name="description" required minLength={2} />
+              </label>
+              <label>
+                Valor (R$)
+                <input
+                  name="amount"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  required
+                />
+              </label>
+              <label>
+                Vencimento
+                <input name="due_date" type="date" required />
+              </label>
+              <button className="primary" disabled={busy}>
+                Criar cobrança
+              </button>
+            </form>
+          </article>
+        </div>
       </div>
     </>
   );

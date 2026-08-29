@@ -869,6 +869,89 @@ async def finance_summary(p:Annotated[Principal,Depends(current_principal)],db:D
     paid=sum(x.amount_cents for x in rows if x.status=="paid")
     return {"pending_cents":pending,"overdue_cents":overdue,"paid_cents":paid,"total_count":len(rows)}
 
+async def _ensure_finance_agent(org_id:uuid.UUID,user_id:uuid.UUID,db:AsyncSession)->Agent:
+    agent=await db.scalar(select(Agent).where(and_(Agent.organization_id==org_id,Agent.agent_type=="finance")).order_by(Agent.created_at.asc()))
+    if agent:
+        if agent.status!="active":agent.status="active"
+        return agent
+    preset=next((x for x in llm.AGENT_PRESETS if x["id"]=="finance"),None)
+    agent=Agent(
+        organization_id=org_id,
+        name=preset["name"] if preset else "Cobrança",
+        agent_type="finance",
+        status="active",
+        instructions=preset["instructions"] if preset else "Acompanhe cobranças com linguagem profissional. Não invente valores.",
+    )
+    db.add(agent);await db.flush()
+    db.add(AuditLog(organization_id=org_id,user_id=user_id,action="agent.created",resource="agent",detail=f"preset:finance"))
+    return agent
+
+def _finance_follow_tone(item:Receivable)->tuple[str,str]:
+    """Retorna (tone_key, instrução de tom) conforme atraso."""
+    days=(date.today()-item.due_date).days
+    if days<0:
+        return "reminder",f"Vence em {-days} dia(s). Tom cordial de lembrete prévio — sem pressão."
+    if days==0:
+        return "due_today","Vence hoje. Tom claro e amigável pedindo confirmação do pagamento."
+    if days<=7:
+        return "overdue_soft",f"Em atraso há {days} dia(s). Tom firme mas respeitoso; ofereça Pix ou contato."
+    return "negotiate",f"Em atraso há {days} dia(s). Tom de negociação: proponha novo prazo curto ou parcelamento simbólico, sem inventar juros."
+
+async def _generate_finance_follow_up(item:Receivable,agent:Agent,p:Principal,db:AsyncSession,force:bool=False)->dict:
+    tone_key,tone_hint=_finance_follow_tone(item)
+    day_key=date.today().isoformat()
+    idem=f"finance-follow:{item.id}:{day_key}:{tone_key}"
+    existing=await db.scalar(select(AgentTask).where(and_(AgentTask.organization_id==p.organization_id,AgentTask.idempotency_key==idem)))
+    if existing and not force and existing.status=="completed" and existing.result_data:
+        return {
+            "task_id":str(existing.id),
+            "receivable_id":str(item.id),
+            "tone":tone_key,
+            "message":(existing.result_data or {}).get("message"),
+            "mode":(existing.result_data or {}).get("mode"),
+            "reused":True,
+        }
+    amount=f"R$ {item.amount_cents/100:.2f}".replace(".",",")
+    due=item.due_date.strftime("%d/%m/%Y")
+    prompt=(
+        f"Redija UMA mensagem curta (máx. 4 frases) em português brasileiro para cobrar/lembrar o cliente.\n"
+        f"Cliente: {item.customer_name}\n"
+        f"Referência: {item.description}\n"
+        f"Valor: {amount}\n"
+        f"Vencimento: {due}\n"
+        f"Orientação de tom: {tone_hint}\n"
+        f"Não invente taxas, boletos ou links. Não use jargão técnico. "
+        f"Termine com um próximo passo claro (ex.: confirmar Pix ou responder esta mensagem)."
+    )
+    rows=(await db.execute(select(KnowledgeChunk,KnowledgeDocument.title).join(KnowledgeDocument,KnowledgeDocument.id==KnowledgeChunk.document_id).where(KnowledgeChunk.organization_id==p.organization_id))).all()
+    sources=retrieve(f"cobrança {item.customer_name} {item.description}",list(rows),3)
+    message,mode=await _org_llm_answer(p.organization_id,agent,prompt,sources,db)
+    now=datetime.now(UTC)
+    if existing:
+        task=existing
+        task.status="completed";task.agent_id=agent.id;task.completed_at=now;task.started_at=task.started_at or now
+        task.result_data={"message":message,"mode":mode,"tone":tone_key,"amount_cents":item.amount_cents,"due_date":str(item.due_date)}
+        task.error=None
+    else:
+        task=AgentTask(
+            organization_id=p.organization_id,
+            agent_id=agent.id,
+            created_by=p.user_id,
+            idempotency_key=idem,
+            task_type="finance.follow_up",
+            title=f"Follow-up: {item.customer_name}"[:180],
+            priority="high" if tone_key in {"overdue_soft","negotiate"} else "normal",
+            status="completed",
+            input_data={"receivable_id":str(item.id),"customer_name":item.customer_name,"amount_cents":item.amount_cents,"due_date":str(item.due_date),"tone":tone_key},
+            result_data={"message":message,"mode":mode,"tone":tone_key,"amount_cents":item.amount_cents,"due_date":str(item.due_date)},
+            started_at=now,
+            completed_at=now,
+        )
+        db.add(task)
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="finance.follow_up_drafted",resource="receivable",detail=f"{item.customer_name}:{tone_key}"))
+    await db.flush()
+    return {"task_id":str(task.id),"receivable_id":str(item.id),"tone":tone_key,"message":message,"mode":mode,"reused":False}
+
 @router.post("/finance/receivables",status_code=201)
 async def create_receivable(data:ReceivableIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER))],db:Db):
     await require_billing_access(p.organization_id,db)
@@ -877,13 +960,63 @@ async def create_receivable(data:ReceivableIn,p:Annotated[Principal,Depends(requ
         contact_uuid=parse_uuid(data.contact_id,"Contact")
         if not await db.scalar(select(Contact.id).where(and_(Contact.id==contact_uuid,Contact.organization_id==p.organization_id))):raise HTTPException(404,"Contact not found")
     item=Receivable(organization_id=p.organization_id,created_by=p.user_id,contact_id=contact_uuid,**data.model_dump(exclude={"contact_id"}))
-    agent=await db.scalar(select(Agent).where(and_(Agent.organization_id==p.organization_id,Agent.agent_type=="finance",Agent.status=="active")))
+    db.add(item);await db.flush()
+    agent=await _ensure_finance_agent(p.organization_id,p.user_id,db)
     db.add_all([
-        item,
-        AgentTask(organization_id=p.organization_id,agent_id=agent.id if agent else None,created_by=p.user_id,task_type="finance.follow_up",title=f"Acompanhar recebimento: {data.customer_name}",priority="normal",input_data={"amount_cents":data.amount_cents,"due_date":str(data.due_date)}),
+        AgentTask(organization_id=p.organization_id,agent_id=agent.id,created_by=p.user_id,task_type="finance.follow_up",title=f"Acompanhar recebimento: {data.customer_name}",priority="normal",status="queued",input_data={"receivable_id":str(item.id),"amount_cents":data.amount_cents,"due_date":str(data.due_date)}),
         AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="receivable.created",resource="receivable",detail=data.customer_name),
     ])
     await db.commit();await db.refresh(item);return {"id":str(item.id),"status":item.status}
+
+@router.post("/finance/receivables/{receivable_id}/follow-up",status_code=201)
+async def receivable_follow_up(receivable_id:str,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER,Role.OPERATOR))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    item=await db.scalar(select(Receivable).where(and_(Receivable.id==parse_uuid(receivable_id,"Receivable"),Receivable.organization_id==p.organization_id)))
+    if not item:raise HTTPException(404,"Receivable not found")
+    if item.status=="paid":raise HTTPException(409,"Cobrança já está paga")
+    agent=await _ensure_finance_agent(p.organization_id,p.user_id,db)
+    result=await _generate_finance_follow_up(item,agent,p,db,force=True)
+    await db.commit()
+    return result
+
+@router.post("/finance/follow-ups/run")
+async def run_finance_follow_ups(p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER))],db:Db):
+    """Gera rascunhos de cobrança para títulos vencidos ou que vencem em até 3 dias."""
+    await require_billing_access(p.organization_id,db)
+    agent=await _ensure_finance_agent(p.organization_id,p.user_id,db)
+    horizon=date.today()+timedelta(days=3)
+    rows=(await db.scalars(select(Receivable).where(and_(Receivable.organization_id==p.organization_id,Receivable.status=="pending",Receivable.due_date<=horizon)).order_by(Receivable.due_date.asc()))).all()
+    drafted=[];skipped=0
+    for item in rows[:20]:
+        try:
+            result=await _generate_finance_follow_up(item,agent,p,db,force=False)
+            drafted.append(result)
+        except Exception:
+            skipped+=1
+    await db.commit()
+    return {"drafted":len(drafted),"skipped":skipped,"items":drafted}
+
+@router.get("/finance/follow-ups")
+async def list_finance_follow_ups(p:Annotated[Principal,Depends(current_principal)],db:Db):
+    rows=(await db.scalars(select(AgentTask).where(and_(AgentTask.organization_id==p.organization_id,AgentTask.task_type=="finance.follow_up",AgentTask.status=="completed")).order_by(AgentTask.completed_at.desc()).limit(30))).all()
+    out=[]
+    for t in rows:
+        rd=t.result_data or {}
+        inp=t.input_data or {}
+        if not rd.get("message"):continue
+        out.append({
+            "id":str(t.id),
+            "title":t.title,
+            "tone":rd.get("tone") or inp.get("tone"),
+            "message":rd.get("message"),
+            "mode":rd.get("mode"),
+            "receivable_id":inp.get("receivable_id"),
+            "customer_name":inp.get("customer_name"),
+            "amount_cents":rd.get("amount_cents") or inp.get("amount_cents"),
+            "due_date":rd.get("due_date") or inp.get("due_date"),
+            "created_at":(t.completed_at or t.created_at).isoformat() if (t.completed_at or t.created_at) else None,
+        })
+    return out
 
 @router.post("/finance/receivables/{receivable_id}/payments",status_code=201)
 async def pay_receivable(receivable_id:str,data:PaymentIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER))],db:Db):
@@ -1614,6 +1747,7 @@ def _human_activity(action:str,resource:str,detail:str|None)->tuple[str,str]:
         "settings.llm_updated":("Inteligência (IA) conectada",d or "Chave atualizada"),
         "receivable.created":("Cobrança lançada",d or "Novo recebível"),
         "receivable.paid":("Pagamento recebido",money_hint or d or "Recebimento confirmado"),
+        "finance.follow_up_drafted":("Lembrete de cobrança preparado",d or "Follow-up"),
         "campaign.created":("Campanha criada",d or "Nova campanha"),
         "campaign.status_changed":("Campanha atualizada",d.replace(":"," → ") if d else "Status alterado"),
         "message.sent":("Mensagem enviada no WhatsApp",d or "Envio"),

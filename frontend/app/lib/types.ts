@@ -98,6 +98,19 @@ export type FinanceSummary = {
   total_count: number;
 };
 
+export type FinanceFollowUp = {
+  id: string;
+  title: string;
+  tone?: string | null;
+  message: string;
+  mode?: string | null;
+  receivable_id?: string | null;
+  customer_name?: string | null;
+  amount_cents?: number | null;
+  due_date?: string | null;
+  created_at?: string | null;
+};
+
 export type Analytics = {
   crm: { opportunities: number; pipeline_cents: number; won: number };
   finance: { pending_cents: number; overdue_cents: number; paid_cents: number };
