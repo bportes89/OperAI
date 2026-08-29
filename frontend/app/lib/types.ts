@@ -276,6 +276,7 @@ export type TeamMember = {
   email: string;
   role: string;
   active: boolean;
+  pending?: boolean;
 };
 
 export type Campaign = {

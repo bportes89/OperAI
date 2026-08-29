@@ -119,12 +119,17 @@ class PaymentIn(BaseModel):
 class TeamMemberIn(BaseModel):
     name:str=Field(min_length=2,max_length=120)
     email:EmailStr
-    password:str=Field(min_length=8,max_length=128)
+    password:str|None=Field(default=None,min_length=8,max_length=128)
     role:str=Field(pattern=r"^(owner|admin|manager|operator|viewer)$")
 
 class TeamMemberUpdateIn(BaseModel):
     role:str|None=Field(default=None,pattern=r"^(owner|admin|manager|operator|viewer)$")
     active:bool|None=None
+
+class AcceptInviteIn(BaseModel):
+    token:str=Field(min_length=20,max_length=2000)
+    password:str=Field(min_length=8,max_length=128)
+    name:str|None=Field(default=None,min_length=2,max_length=120)
 
 class CampaignIn(BaseModel):
     name:str=Field(min_length=2,max_length=180)

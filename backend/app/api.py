@@ -10,7 +10,7 @@ from app.auth import Principal,current_principal,require_roles
 from app.billing_guard import ensure_subscription_on_register,plan_usage,require_billing_access,require_plan_capacity,subscription_access_payload
 from app.core.config import get_settings
 from app.core.database import get_session
-from app.core.security import create_access_token,create_password_reset_token,decode_password_reset_token,hash_password,hash_refresh_token,new_refresh_token,verify_password
+from app.core.security import create_access_token,create_password_reset_token,create_team_invite_token,decode_password_reset_token,decode_team_invite_token,hash_password,hash_refresh_token,new_refresh_token,verify_password
 from app.crypto import decrypt_secret,encrypt_secret
 from app.documents import extract_text_from_upload
 from app.models import (
@@ -26,7 +26,7 @@ from app.schemas import (
     EvolutionConnectIn,ForgotPasswordIn,IncomingMessageIn,InboxThreadStatusIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,MetaConnectIn,
     MarketingDiagnosisIn,MarketingDiscoveryIn,MarketingEngagementIn,MarketingGovernanceIn,MarketingLeadIn,MarketingPackageIn,MarketingSpendIn,
     MarketingSpendReviewIn,OnboardingUpdateIn,OpportunityIn,OpportunityStageIn,OpportunityUpdateIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
-    FinanceSendIn,RegisterIn,ResetPasswordIn,TeamMemberIn,TeamMemberUpdateIn,TemplateSendIn,TokenPair,
+    AcceptInviteIn,FinanceSendIn,RegisterIn,ResetPasswordIn,TeamMemberIn,TeamMemberUpdateIn,TemplateSendIn,TokenPair,
 )
 
 router=APIRouter(prefix="/api/v1")
@@ -201,7 +201,7 @@ async def register(data:RegisterIn,db:Db):
 
 @router.post("/auth/login",response_model=TokenPair)
 async def login(data:LoginIn,db:Db):
-    row=(await db.execute(select(User,Organization,Membership).join(Membership,Membership.user_id==User.id).join(Organization,Organization.id==Membership.organization_id).where(and_(User.email==data.email,Organization.slug==data.organization_slug,Membership.active.is_(True))))).first()
+    row=(await db.execute(select(User,Organization,Membership).join(Membership,Membership.user_id==User.id).join(Organization,Organization.id==Membership.organization_id).where(and_(User.email==data.email,User.active.is_(True),Organization.slug==data.organization_slug,Membership.active.is_(True))))).first()
     if not row or not verify_password(data.password,row.User.password_hash):raise HTTPException(401,"Invalid credentials")
     raw,hashed=new_refresh_token()
     db.add(RefreshSession(user_id=row.User.id,organization_id=row.Organization.id,token_hash=hashed,expires_at=datetime.now(UTC)+timedelta(days=get_settings().refresh_token_days)))
@@ -258,6 +258,52 @@ async def reset_password(data:ResetPasswordIn,db:Db):
     ))
     await db.commit()
     return {"status":"ok","message":"Senha atualizada. Entre com a nova senha.","organization_slug":(await db.scalar(select(Organization.slug).where(Organization.id==org_id)))}
+
+@router.get("/auth/invite")
+async def preview_team_invite(token:str,db:Db):
+    try:
+        payload=decode_team_invite_token(token)
+    except Exception:
+        raise HTTPException(400,"Convite inválido ou expirado.") from None
+    user=await db.scalar(select(User).where(User.id==parse_uuid(str(payload.get("sub") or ""),"User")))
+    org=await db.scalar(select(Organization).where(Organization.id==parse_uuid(str(payload.get("org") or ""),"Organization")))
+    if not user or not org:raise HTTPException(400,"Convite inválido ou expirado.")
+    membership=await db.scalar(select(Membership).where(and_(Membership.user_id==user.id,Membership.organization_id==org.id)))
+    if not membership:raise HTTPException(400,"Convite inválido ou expirado.")
+    return {
+        "email":user.email,
+        "name":user.name,
+        "organization_name":org.name,
+        "organization_slug":org.slug,
+        "role":membership.role.value,
+        "pending":not user.active,
+    }
+
+@router.post("/auth/accept-invite")
+async def accept_team_invite(data:AcceptInviteIn,db:Db):
+    try:
+        payload=decode_team_invite_token(data.token)
+    except Exception:
+        raise HTTPException(400,"Convite inválido ou expirado. Peça um novo link na Equipe.") from None
+    user_id=parse_uuid(str(payload.get("sub") or ""),"User")
+    org_id=parse_uuid(str(payload.get("org") or ""),"Organization")
+    user=await db.scalar(select(User).where(User.id==user_id))
+    org=await db.scalar(select(Organization).where(Organization.id==org_id))
+    if not user or not org:raise HTTPException(400,"Convite inválido ou expirado.")
+    membership=await db.scalar(select(Membership).where(and_(Membership.user_id==user.id,Membership.organization_id==org.id,Membership.active.is_(True))))
+    if not membership:raise HTTPException(400,"Convite inválido ou expirado.")
+    if data.name and data.name.strip():
+        user.name=data.name.strip()[:120]
+    user.password_hash=hash_password(data.password)
+    user.active=True
+    db.add(AuditLog(organization_id=org.id,user_id=user.id,action="team.invite_accepted",resource="membership",detail=user.email))
+    await db.commit()
+    return {
+        "status":"ok",
+        "message":"Convite aceito. Entre com seu e-mail e a nova senha.",
+        "organization_slug":org.slug,
+        "email":user.email,
+    }
 
 @router.post("/auth/refresh",response_model=TokenPair)
 async def refresh(data:RefreshIn,db:Db):
@@ -2348,6 +2394,8 @@ def _human_activity(action:str,resource:str,detail:str|None)->tuple[str,str]:
         "auth.password_reset_requested":("Recuperação de senha solicitada",d or "Pedido"),
         "auth.password_reset":("Senha redefinida",d or "Nova senha"),
         "team.password_reset":("Senha temporária gerada na Equipe",d or "Membro"),
+        "team.invite_accepted":("Convite de equipe aceito",d or "Novo membro"),
+        "team.invite_resent":("Convite de equipe reenviado",d or "Link gerado"),
         "knowledge.ingested":("Conteúdo publicado na base",d.split(":")[0] if d else "Novo documento"),
         "settings.llm_updated":("Inteligência (IA) conectada",d or "Chave atualizada"),
         "settings.brand_kit_updated":("Kit de marca atualizado",d or "Identidade da empresa"),
@@ -2403,19 +2451,76 @@ async def analytics_activity(p:Annotated[Principal,Depends(current_principal)],d
 @router.get("/team/members")
 async def team_members(p:Annotated[Principal,Depends(current_principal)],db:Db):
     rows=(await db.execute(select(Membership,User).join(User,User.id==Membership.user_id).where(Membership.organization_id==p.organization_id))).all()
-    return [{"membership_id":str(m.id),"user_id":str(u.id),"name":u.name,"email":u.email,"role":m.role.value,"active":m.active} for m,u in rows]
+    return [{
+        "membership_id":str(m.id),
+        "user_id":str(u.id),
+        "name":u.name,
+        "email":u.email,
+        "role":m.role.value,
+        "active":m.active,
+        "pending":not u.active,
+    } for m,u in rows]
+
+def _invite_url(user_id:uuid.UUID,org:Organization)->str:
+    token=create_team_invite_token(user_id=str(user_id),organization_id=str(org.id))
+    return f"{get_settings().frontend_url.rstrip('/')}/accept-invite?token={token}&org={org.slug}"
 
 @router.post("/team/members",status_code=201)
 async def create_team_member(data:TeamMemberIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN))],db:Db):
     await require_billing_access(p.organization_id,db)
     await require_plan_capacity(p.organization_id,db,"users")
     if data.role=="owner" and p.role!=Role.OWNER:raise HTTPException(403,"Only owners can create owners")
-    if await db.scalar(select(User.id).where(User.email==data.email)):raise HTTPException(409,"Email already belongs to an account")
-    user=User(name=data.name,email=data.email,password_hash=hash_password(data.password));db.add(user);await db.flush()
+    email=str(data.email).strip().lower()
+    if await db.scalar(select(User.id).where(User.email==email)):raise HTTPException(409,"Email already belongs to an account")
+    org=await db.scalar(select(Organization).where(Organization.id==p.organization_id))
+    if not org:raise HTTPException(404,"Organization not found")
+    immediate=bool(data.password and data.password.strip())
+    user=User(
+        name=data.name.strip(),
+        email=email,
+        password_hash=hash_password(data.password.strip()) if immediate else hash_password(secrets.token_urlsafe(24)),
+        active=immediate,
+    )
+    db.add(user);await db.flush()
     membership=Membership(organization_id=p.organization_id,user_id=user.id,role=Role(data.role))
-    db.add_all([membership,AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="team.member_created",resource="membership",detail=f"{data.email}:{data.role}")])
+    db.add_all([membership,AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="team.member_created",resource="membership",detail=f"{email}:{data.role}:{'direct' if immediate else 'invite'}")])
     await db.commit();await db.refresh(membership)
-    return {"membership_id":str(membership.id),"user_id":str(user.id),"role":membership.role.value,"active":membership.active}
+    invite_url=None if immediate else _invite_url(user.id,org)
+    return {
+        "membership_id":str(membership.id),
+        "user_id":str(user.id),
+        "role":membership.role.value,
+        "active":membership.active,
+        "pending":not user.active,
+        "invite_url":invite_url,
+        "expires_in_days":None if immediate else 7,
+        "message":(
+            "Membro criado com senha definida."
+            if immediate
+            else "Convite gerado — copie o link e envie ao colega (válido por 7 dias)."
+        ),
+    }
+
+@router.post("/team/members/{membership_id}/invite")
+async def resend_team_invite(membership_id:str,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    item=await db.scalar(select(Membership).where(and_(Membership.id==parse_uuid(membership_id,"Membership"),Membership.organization_id==p.organization_id)))
+    if not item:raise HTTPException(404,"Membership not found")
+    user=await db.scalar(select(User).where(User.id==item.user_id))
+    org=await db.scalar(select(Organization).where(Organization.id==p.organization_id))
+    if not user or not org:raise HTTPException(404,"User not found")
+    if user.active:
+        raise HTTPException(409,"Este membro já ativou a conta. Use redefinir senha se precisar.")
+    invite_url=_invite_url(user.id,org)
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="team.invite_resent",resource="membership",detail=user.email))
+    await db.commit()
+    return {
+        "membership_id":str(item.id),
+        "email":user.email,
+        "invite_url":invite_url,
+        "expires_in_days":7,
+        "message":"Novo link de convite gerado (7 dias).",
+    }
 
 @router.patch("/team/members/{membership_id}")
 async def update_team_member(membership_id:str,data:TeamMemberUpdateIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN))],db:Db):

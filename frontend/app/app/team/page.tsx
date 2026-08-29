@@ -12,7 +12,12 @@ export default function TeamPage() {
     email: string;
     password: string;
   } | null>(null);
+  const [inviteLink, setInviteLink] = useState<{
+    email: string;
+    url: string;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [setPasswordNow, setSetPasswordNow] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -33,14 +38,35 @@ export default function TeamPage() {
     setError("");
     setMessage("");
     setTempPassword(null);
+    setInviteLink(null);
     const form = event.currentTarget;
+    const raw = Object.fromEntries(new FormData(form));
+    const payload: Record<string, unknown> = {
+      name: raw.name,
+      email: raw.email,
+      role: raw.role,
+    };
+    if (setPasswordNow && raw.password) {
+      payload.password = raw.password;
+    }
     try {
-      await apiJson("/api/v1/team/members", {
+      const result = await apiJson<{
+        message?: string;
+        invite_url?: string | null;
+        pending?: boolean;
+      }>("/api/v1/team/members", {
         method: "POST",
-        body: JSON.stringify(Object.fromEntries(new FormData(form))),
+        body: JSON.stringify(payload),
       });
       form.reset();
-      setMessage("Membro adicionado.");
+      setSetPasswordNow(false);
+      setMessage(result.message || "Membro adicionado.");
+      if (result.invite_url) {
+        setInviteLink({
+          email: String(raw.email),
+          url: result.invite_url,
+        });
+      }
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -73,6 +99,7 @@ export default function TeamPage() {
     setError("");
     setMessage("");
     setTempPassword(null);
+    setInviteLink(null);
     try {
       const result = await apiJson<{
         email: string;
@@ -87,6 +114,30 @@ export default function TeamPage() {
         password: result.temporary_password,
       });
       setMessage(result.message || "Senha temporária gerada.");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resendInvite(item: TeamMember) {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    setTempPassword(null);
+    setInviteLink(null);
+    try {
+      const result = await apiJson<{
+        email: string;
+        invite_url: string;
+        message?: string;
+      }>(`/api/v1/team/members/${item.membership_id}/invite`, {
+        method: "POST",
+        body: "{}",
+      });
+      setInviteLink({ email: result.email, url: result.invite_url });
+      setMessage(result.message || "Convite gerado.");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -123,6 +174,23 @@ export default function TeamPage() {
           </button>
         </div>
       )}
+      {inviteLink && (
+        <div className="secret-box" style={{ marginBottom: 16 }}>
+          <strong>Link de convite (7 dias) — envie ao colega</strong>
+          <p style={{ margin: "8px 0", wordBreak: "break-all" }}>
+            {inviteLink.email}
+            <br />
+            <a href={inviteLink.url}>{inviteLink.url}</a>
+          </p>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => void navigator.clipboard.writeText(inviteLink.url)}
+          >
+            Copiar link
+          </button>
+        </div>
+      )}
 
       <div className="content-grid">
         <article className="panel">
@@ -144,19 +212,35 @@ export default function TeamPage() {
                   <strong>{item.name}</strong>
                   <small>
                     {item.email} · {item.role}
+                    {item.pending ? " · convite pendente" : ""}
                   </small>
                 </div>
                 <span className={item.active ? "online" : "stage"}>
-                  {item.active ? "ativo" : "inativo"}
+                  {item.pending
+                    ? "pendente"
+                    : item.active
+                      ? "ativo"
+                      : "inativo"}
                 </span>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void resetPassword(item)}
-                  >
-                    Redefinir senha
-                  </button>
+                  {item.pending && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void resendInvite(item)}
+                    >
+                      Reenviar convite
+                    </button>
+                  )}
+                  {!item.pending && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void resetPassword(item)}
+                    >
+                      Redefinir senha
+                    </button>
+                  )}
                   <button type="button" onClick={() => void toggleMember(item)}>
                     {item.active ? "Desativar" : "Ativar"}
                   </button>
@@ -173,6 +257,10 @@ export default function TeamPage() {
               <h2>Novo membro</h2>
             </div>
           </div>
+          <p style={{ marginTop: 0, opacity: 0.85, lineHeight: 1.5 }}>
+            Por padrão geramos um link de convite (7 dias) para o colega criar a
+            própria senha. Sem SMTP: copie e envie no WhatsApp/e-mail.
+          </p>
           <form onSubmit={createMember}>
             <label>
               Nome
@@ -183,10 +271,6 @@ export default function TeamPage() {
               <input name="email" type="email" required />
             </label>
             <label>
-              Senha temporária
-              <input name="password" type="password" required minLength={8} />
-            </label>
-            <label>
               Papel
               <select name="role" defaultValue="operator">
                 <option value="admin">Admin</option>
@@ -195,8 +279,22 @@ export default function TeamPage() {
                 <option value="viewer">Viewer</option>
               </select>
             </label>
+            <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={setPasswordNow}
+                onChange={(e) => setSetPasswordNow(e.target.checked)}
+              />
+              Definir senha agora (sem link)
+            </label>
+            {setPasswordNow && (
+              <label>
+                Senha temporária
+                <input name="password" type="password" required minLength={8} />
+              </label>
+            )}
             <button className="primary" disabled={busy}>
-              Adicionar membro
+              {setPasswordNow ? "Adicionar membro" : "Gerar convite"}
             </button>
           </form>
         </article>

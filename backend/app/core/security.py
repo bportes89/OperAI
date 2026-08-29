@@ -22,6 +22,17 @@ def decode_password_reset_token(token:str)->dict:
     if payload.get("type")!="password_reset":
         raise jwt.InvalidTokenError("not a password reset token")
     return payload
+def create_team_invite_token(*,user_id:str,organization_id:str,days:int=7)->str:
+    s=get_settings();now=datetime.now(UTC)
+    return jwt.encode(
+        {"sub":user_id,"org":organization_id,"type":"team_invite","iat":now,"exp":now+timedelta(days=days)},
+        s.jwt_secret,algorithm="HS256",
+    )
+def decode_team_invite_token(token:str)->dict:
+    payload=jwt.decode(token,get_settings().jwt_secret,algorithms=["HS256"])
+    if payload.get("type")!="team_invite":
+        raise jwt.InvalidTokenError("not a team invite token")
+    return payload
 def new_refresh_token()->tuple[str,str]:
     raw=secrets.token_urlsafe(48);return raw,hashlib.sha256(raw.encode()).hexdigest()
 def hash_refresh_token(raw:str)->str:return hashlib.sha256(raw.encode()).hexdigest()
