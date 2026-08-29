@@ -151,8 +151,21 @@ async def refresh(data:RefreshIn,db:Db):
 
 @router.get("/billing/plans")
 async def billing_plans(db:Db):
-    rows=(await db.scalars(select(SaaSPlan).where(SaaSPlan.active.is_(True)).order_by(SaaSPlan.sort_order))).all()
-    return [{"id":str(x.id),"slug":x.slug,"name":x.name,"monthly_price_cents":x.monthly_price_cents,"limits":x.limits,"features":x.features,"sort_order":x.sort_order} for x in rows]
+    rows=(await db.scalars(select(SaaSPlan).where(and_(SaaSPlan.active.is_(True),SaaSPlan.slug.in_(["start","pro","business"]))).order_by(SaaSPlan.sort_order))).all()
+    if not rows:
+        rows=(await db.scalars(select(SaaSPlan).where(SaaSPlan.active.is_(True)).order_by(SaaSPlan.sort_order))).all()
+    return [{
+        "id":str(x.id),
+        "slug":x.slug,
+        "name":x.name,
+        "price_cents":x.monthly_price_cents,
+        "monthly_price_cents":x.monthly_price_cents,
+        "currency":"BRL",
+        "limits":x.limits or {},
+        "features":x.features if isinstance(x.features,list) else (list(x.features.keys()) if isinstance(x.features,dict) else []),
+        "active":bool(x.active),
+        "sort_order":x.sort_order,
+    } for x in rows]
 
 @router.get("/billing/subscription")
 async def billing_subscription(p:Annotated[Principal,Depends(current_principal)],db:Db):

@@ -9,26 +9,73 @@ import type {
   Subscription,
 } from "../../lib/types";
 
+function normalizePlan(raw: Record<string, unknown>): BillingPlan {
+  const price =
+    Number(raw.price_cents ?? raw.monthly_price_cents ?? 0) || 0;
+  let features: string[] = [];
+  if (Array.isArray(raw.features)) features = raw.features.map(String);
+  else if (raw.features && typeof raw.features === "object") {
+    features = Object.keys(raw.features as object);
+  }
+  return {
+    slug: String(raw.slug ?? ""),
+    name: String(raw.name ?? raw.slug ?? "Plano"),
+    price_cents: price,
+    currency: String(raw.currency ?? "BRL"),
+    limits: (raw.limits as Record<string, number>) || undefined,
+    features,
+    active: raw.active !== false,
+  };
+}
+
 export default function BillingPage() {
   const [plans, setPlans] = useState<BillingPlan[]>([]);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [localSubId, setLocalSubId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    const errors: string[] = [];
+
     try {
-      setError("");
-      const [planList, sub] = await Promise.all([
-        apiJson<BillingPlan[]>("/api/v1/billing/plans"),
-        apiJson<Subscription>("/api/v1/billing/subscription"),
-      ]);
-      setPlans(planList);
-      setSubscription(sub);
+      const planRaw = await apiJson<Record<string, unknown>[]>(
+        "/api/v1/billing/plans",
+      );
+      setPlans((planRaw || []).map(normalizePlan).filter((p) => p.slug));
     } catch (e) {
-      setError((e as Error).message);
+      setPlans([]);
+      errors.push(
+        "Não foi possível carregar os planos agora. Atualize a página em instantes.",
+      );
+      if (e instanceof Error && e.message) {
+        /* keep human message only */
+      }
     }
+
+    try {
+      const sub = await apiJson<Subscription & { plan?: Record<string, unknown> }>(
+        "/api/v1/billing/subscription",
+      );
+      const plan = sub.plan
+        ? normalizePlan(sub.plan as unknown as Record<string, unknown>)
+        : null;
+      setSubscription({
+        ...sub,
+        plan_slug: sub.plan_slug ?? plan?.slug,
+        plan,
+      });
+    } catch {
+      setSubscription(null);
+      errors.push("Não foi possível carregar o status da assinatura.");
+    }
+
+    if (errors.length) setError(errors.join(" "));
+    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -47,7 +94,7 @@ export default function BillingPage() {
       if (result.mode === "local") {
         setLocalSubId(result.subscription_id ?? null);
         setMessage(
-          "Modo local: confirme abaixo para ativar a assinatura de desenvolvimento.",
+          "Ambiente de desenvolvimento: confirme abaixo para ativar a assinatura.",
         );
       } else {
         const url = result.checkout_url || result.payment_url;
@@ -55,11 +102,14 @@ export default function BillingPage() {
           window.location.href = url;
           return;
         }
-        setMessage("Checkout criado. Aguarde confirmação do pagamento.");
+        setMessage("Checkout criado. Aguarde a confirmação do pagamento.");
       }
       await load();
     } catch (e) {
-      setError((e as Error).message);
+      setError(
+        (e as Error).message ||
+          "Não foi possível iniciar a assinatura. Tente novamente.",
+      );
     } finally {
       setBusy(false);
     }
@@ -75,7 +125,7 @@ export default function BillingPage() {
         method: "POST",
         body: JSON.stringify({ subscription_id: localSubId }),
       });
-      setMessage("Assinatura local ativada.");
+      setMessage("Assinatura ativada.");
       setLocalSubId(null);
       await load();
     } catch (e) {
@@ -87,9 +137,6 @@ export default function BillingPage() {
 
   const planFeatures = (plan: BillingPlan) => {
     if (Array.isArray(plan.features)) return plan.features.map(String);
-    if (plan.features && typeof plan.features === "object") {
-      return Object.keys(plan.features);
-    }
     return [];
   };
 
@@ -98,7 +145,7 @@ export default function BillingPage() {
       <header>
         <div>
           <span>CONTA</span>
-          <h1>Billing</h1>
+          <h1>Planos e assinatura</h1>
         </div>
         <button type="button" className="secondary" onClick={() => void load()}>
           Atualizar
@@ -114,7 +161,9 @@ export default function BillingPage() {
             <h2>Status atual</h2>
           </div>
         </div>
-        {subscription ? (
+        {loading && !subscription ? (
+          <div className="empty">Carregando assinatura…</div>
+        ) : subscription ? (
           <div className="kpi-list">
             <div>
               <span>Plano</span>
@@ -146,7 +195,10 @@ export default function BillingPage() {
             </div>
           </div>
         ) : (
-          <div className="empty">Carregando assinatura...</div>
+          <div className="empty">
+            <strong>Assinatura indisponível</strong>
+            <p>Atualize a página ou tente novamente em instantes.</p>
+          </div>
         )}
         {subscription?.reason && (
           <p className="pricing-note">{subscription.reason}</p>
@@ -154,11 +206,18 @@ export default function BillingPage() {
       </article>
 
       <div className="pricing-grid" style={{ marginBottom: 18 }}>
-        {plans.length === 0 ? (
+        {loading && plans.length === 0 ? (
+          <article className="panel">
+            <div className="empty">Carregando planos…</div>
+          </article>
+        ) : plans.length === 0 ? (
           <article className="panel">
             <div className="empty">
-              <strong>Planos indisponíveis</strong>
-              <p>Não foi possível carregar os planos do backend.</p>
+              <strong>Planos temporariamente indisponíveis</strong>
+              <p>
+                Não conseguimos listar os planos agora. Clique em Atualizar ou
+                tente novamente em alguns segundos.
+              </p>
             </div>
           </article>
         ) : (
@@ -179,7 +238,7 @@ export default function BillingPage() {
               <button
                 type="button"
                 className="primary"
-                disabled={busy}
+                disabled={busy || loading}
                 onClick={() => void checkout(plan.slug)}
               >
                 Assinar {plan.name}
@@ -193,17 +252,17 @@ export default function BillingPage() {
         <article className="panel">
           <div className="panel-title">
             <div>
-              <span>MODO LOCAL</span>
+              <span>DESENVOLVIMENTO</span>
               <h2>Confirmar pagamento</h2>
             </div>
           </div>
           <p className="pricing-note">
-            Ambiente de desenvolvimento (Asaas sem chave). Confirme para marcar
-            a assinatura como ativa.
+            Ambiente sem cobrança real. Confirme para marcar a assinatura como
+            ativa.
           </p>
           <form onSubmit={confirmLocal}>
             <button className="primary" disabled={busy}>
-              Confirmar assinatura local
+              Confirmar assinatura
             </button>
           </form>
         </article>

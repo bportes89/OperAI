@@ -270,6 +270,7 @@ export type BillingPlan = {
   slug: string;
   name: string;
   price_cents: number;
+  monthly_price_cents?: number;
   currency?: string;
   limits?: Record<string, number>;
   features?: string[] | Record<string, unknown>;

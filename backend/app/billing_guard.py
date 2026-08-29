@@ -81,14 +81,19 @@ def subscription_access_payload(sub: OrganizationSubscription | None, plan: SaaS
             "id": str(plan.id),
             "slug": plan.slug,
             "name": plan.name,
+            "price_cents": plan.monthly_price_cents,
             "monthly_price_cents": plan.monthly_price_cents,
-            "limits": plan.limits,
-            "features": plan.features,
+            "currency": "BRL",
+            "limits": plan.limits or {},
+            "features": plan.features if isinstance(plan.features, list) else (
+                list(plan.features.keys()) if isinstance(plan.features, dict) else []
+            ),
         }
     return {
         "access": access,
         "reason": reason,
         "status": status,
+        "plan_slug": plan.slug if plan else None,
         "trial_ends_at": sub.trial_ends_at,
         "current_period_end": sub.current_period_end,
         "cancel_at_period_end": sub.cancel_at_period_end,
