@@ -10,7 +10,7 @@ export function agentLabel(type: string) {
     commercial: "Comercial",
     whatsapp: "Atendimento",
     finance: "Cobrança",
-    marketing: "Marketing",
+    marketing: "Gestor",
   };
   return labels[type] ?? type;
 }

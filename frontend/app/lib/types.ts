@@ -15,6 +15,16 @@ export type Agent = {
   instructions: string;
 };
 
+export type AgentPreset = {
+  id: string;
+  name: string;
+  agent_type: string;
+  blurb: string;
+  featured: boolean;
+  workspace_href: string;
+  workspace_label: string;
+};
+
 export type KnowledgeDocument = {
   id: string;
   title: string;

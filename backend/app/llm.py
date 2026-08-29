@@ -30,6 +30,62 @@ AGENT_SYSTEM_PROMPTS = {
     ),
 }
 
+# Presets prontos para PME — sem exigir “escrever prompt”
+AGENT_PRESETS = [
+    {
+        "id": "gestor",
+        "name": "Agente Gestor",
+        "agent_type": "marketing",
+        "blurb": "Orquestra o Marketing: diagnostica, descobre e só então propõe plano e peças.",
+        "featured": True,
+        "workspace_href": "/app/marketing",
+        "workspace_label": "Abrir playbook de Marketing",
+        "instructions": (
+            "Você coordena o pacote Essencial (Gestor + Redação + Mídias). "
+            "Diagnostique antes de produzir. Priorize canais baratos e CTA que vire contato."
+        ),
+    },
+    {
+        "id": "commercial",
+        "name": "Comercial",
+        "agent_type": "commercial",
+        "blurb": "Qualifica leads, tira dúvidas da oferta e sugere o próximo passo de venda.",
+        "featured": False,
+        "workspace_href": "/app/crm",
+        "workspace_label": "Abrir CRM",
+        "instructions": (
+            "Qualifique leads B2B/PME, identifique dor e urgência, e conduza para o próximo passo "
+            "comercial com objetividade — sem inventar preços ou prazos."
+        ),
+    },
+    {
+        "id": "whatsapp",
+        "name": "Atendimento WhatsApp",
+        "agent_type": "whatsapp",
+        "blurb": "Respostas curtas e cordiais no tom da empresa, com base no conhecimento publicado.",
+        "featured": False,
+        "workspace_href": "/app/inbox",
+        "workspace_label": "Abrir WhatsApp",
+        "instructions": (
+            "Atenda no WhatsApp com respostas curtas e úteis. Use a base da empresa. "
+            "Se não souber, diga que vai encaminhar para um humano."
+        ),
+    },
+    {
+        "id": "finance",
+        "name": "Cobrança",
+        "agent_type": "finance",
+        "blurb": "Explica status de recebíveis e ajuda a priorizar follow-up de cobrança.",
+        "featured": False,
+        "workspace_href": "/app/finance",
+        "workspace_label": "Abrir Cobrança",
+        "instructions": (
+            "Acompanhe cobranças e status de recebíveis com linguagem profissional. "
+            "Nunca invente valores — use só o que estiver no contexto."
+        ),
+    },
+]
+
 
 async def chat(
     provider: str,

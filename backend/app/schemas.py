@@ -33,6 +33,10 @@ class AgentIn(BaseModel):
     model:str=Field(default="gpt-5-mini",max_length=80)
     instructions:str=Field(min_length=10,max_length=12000)
 
+class AgentFromPresetIn(BaseModel):
+    preset_id:str=Field(min_length=2,max_length=40)
+    name:str|None=Field(default=None,min_length=2,max_length=120)
+
 class AgentStatusIn(BaseModel):
     status:str=Field(pattern=r"^(draft|active|paused)$")
 

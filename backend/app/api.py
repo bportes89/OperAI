@@ -20,7 +20,7 @@ from app.models import (
 )
 from app.rag import embed_text,retrieve
 from app.schemas import (
-    AgentIn,AgentQueryIn,AgentStatusIn,CampaignIn,CampaignStatusIn,ChannelIn,CheckoutIn,
+    AgentFromPresetIn,AgentIn,AgentQueryIn,AgentStatusIn,CampaignIn,CampaignStatusIn,ChannelIn,CheckoutIn,
     EvolutionConnectIn,IncomingMessageIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,
     MarketingDiagnosisIn,MarketingDiscoveryIn,MarketingEngagementIn,MarketingGovernanceIn,MarketingLeadIn,MarketingPackageIn,MarketingSpendIn,
     MarketingSpendReviewIn,OnboardingUpdateIn,OpportunityIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
@@ -370,10 +370,60 @@ async def create_opportunity(data:OpportunityIn,p:Annotated[Principal,Depends(re
     await db.commit();await db.refresh(item)
     return {"id":str(item.id),**data.model_dump()}
 
+def _agent_out(x:Agent)->dict:
+    return {"id":str(x.id),"name":x.name,"agent_type":x.agent_type,"status":x.status,"model":x.model,"instructions":x.instructions}
+
+@router.get("/agents/presets")
+async def agent_presets(p:Annotated[Principal,Depends(current_principal)]):
+    return [
+        {
+            "id":x["id"],
+            "name":x["name"],
+            "agent_type":x["agent_type"],
+            "blurb":x["blurb"],
+            "featured":x["featured"],
+            "workspace_href":x["workspace_href"],
+            "workspace_label":x["workspace_label"],
+        }
+        for x in llm.AGENT_PRESETS
+    ]
+
 @router.get("/agents")
 async def agents(p:Annotated[Principal,Depends(current_principal)],db:Db):
+    # Gestor sempre existe no produto — não só dentro do módulo Marketing
+    await _ensure_marketing_agent(p.organization_id,p.user_id,db)
+    await db.commit()
     rows=(await db.scalars(select(Agent).where(Agent.organization_id==p.organization_id).order_by(Agent.created_at.desc()))).all()
-    return [{"id":str(x.id),"name":x.name,"agent_type":x.agent_type,"status":x.status,"model":x.model,"instructions":x.instructions} for x in rows]
+    return [_agent_out(x) for x in rows]
+
+@router.post("/agents/from-preset",status_code=201)
+async def create_agent_from_preset(data:AgentFromPresetIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    preset=next((x for x in llm.AGENT_PRESETS if x["id"]==data.preset_id),None)
+    if not preset:raise HTTPException(404,"Preset não encontrado")
+    if preset["id"]=="gestor":
+        item=await _ensure_marketing_agent(p.organization_id,p.user_id,db)
+        await db.commit();await db.refresh(item)
+        return _agent_out(item)
+    name=data.name or preset["name"]
+    existing=await db.scalar(select(Agent).where(and_(Agent.organization_id==p.organization_id,Agent.agent_type==preset["agent_type"])).order_by(Agent.created_at.asc()))
+    if existing:
+        if existing.status!="active":
+            existing.status="active"
+        await db.commit();await db.refresh(existing)
+        return _agent_out(existing)
+    if await db.scalar(select(Agent).where(and_(Agent.organization_id==p.organization_id,Agent.name==name))):
+        raise HTTPException(409,"Já existe um agente com este nome")
+    item=Agent(
+        organization_id=p.organization_id,
+        name=name,
+        agent_type=preset["agent_type"],
+        status="active",
+        instructions=preset["instructions"],
+    )
+    db.add_all([item,AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="agent.created",resource="agent",detail=f"preset:{preset['id']}")])
+    await db.commit();await db.refresh(item)
+    return _agent_out(item)
 
 @router.post("/agents",status_code=201)
 async def create_agent(data:AgentIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER))],db:Db):
@@ -723,12 +773,12 @@ async def _ensure_marketing_agent(org_id:uuid.UUID,user_id:uuid.UUID,db:AsyncSes
         return agent
     agent=Agent(
         organization_id=org_id,
-        name="Marketing Gestor",
+        name="Agente Gestor",
         agent_type="marketing",
         status="active",
-        instructions=(
-            "Você coordena o pacote Essencial (Gestor + Redação + Mídias). "
-            "Diagnostique antes de produzir. Priorize canais baratos e CTA que vire contato."
+        instructions=next(
+            (x["instructions"] for x in llm.AGENT_PRESETS if x["id"]=="gestor"),
+            "Você coordena o pacote Essencial (Gestor + Redação + Mídias). Diagnostique antes de produzir.",
         ),
     )
     db.add(agent);await db.flush()
