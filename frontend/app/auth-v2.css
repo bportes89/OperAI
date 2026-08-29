@@ -318,7 +318,8 @@ body:has(.auth-v2) {
   margin-top: -6px;
 }
 
-.auth-v2-forgot button {
+.auth-v2-forgot button,
+.auth-v2-forgot a {
   appearance: none;
   border: 0;
   background: none;
@@ -327,6 +328,7 @@ body:has(.auth-v2) {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+  text-decoration: none;
 }
 
 .auth-v2-submit {

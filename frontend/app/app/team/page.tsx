@@ -7,6 +7,11 @@ import type { TeamMember } from "../../lib/types";
 export default function TeamPage() {
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [tempPassword, setTempPassword] = useState<{
+    email: string;
+    password: string;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -26,6 +31,8 @@ export default function TeamPage() {
     event.preventDefault();
     setBusy(true);
     setError("");
+    setMessage("");
+    setTempPassword(null);
     const form = event.currentTarget;
     try {
       await apiJson("/api/v1/team/members", {
@@ -33,6 +40,7 @@ export default function TeamPage() {
         body: JSON.stringify(Object.fromEntries(new FormData(form))),
       });
       form.reset();
+      setMessage("Membro adicionado.");
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -53,6 +61,39 @@ export default function TeamPage() {
     }
   }
 
+  async function resetPassword(item: TeamMember) {
+    if (
+      !window.confirm(
+        `Gerar senha temporária para ${item.name} (${item.email})? Sessões atuais serão encerradas.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setMessage("");
+    setTempPassword(null);
+    try {
+      const result = await apiJson<{
+        email: string;
+        temporary_password: string;
+        message?: string;
+      }>(`/api/v1/team/members/${item.membership_id}/reset-password`, {
+        method: "POST",
+        body: "{}",
+      });
+      setTempPassword({
+        email: result.email,
+        password: result.temporary_password,
+      });
+      setMessage(result.message || "Senha temporária gerada.");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <>
       <header>
@@ -62,6 +103,26 @@ export default function TeamPage() {
         </div>
       </header>
       {error && <p className="error">{error}</p>}
+      {message && <p className="success">{message}</p>}
+      {tempPassword && (
+        <div className="secret-box" style={{ marginBottom: 16 }}>
+          <strong>Senha temporária — copie agora</strong>
+          <p style={{ margin: "8px 0" }}>
+            {tempPassword.email}
+            <br />
+            <code>{tempPassword.password}</code>
+          </p>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() =>
+              void navigator.clipboard.writeText(tempPassword.password)
+            }
+          >
+            Copiar senha
+          </button>
+        </div>
+      )}
 
       <div className="content-grid">
         <article className="panel">
@@ -88,9 +149,18 @@ export default function TeamPage() {
                 <span className={item.active ? "online" : "stage"}>
                   {item.active ? "ativo" : "inativo"}
                 </span>
-                <button type="button" onClick={() => void toggleMember(item)}>
-                  {item.active ? "Desativar" : "Ativar"}
-                </button>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void resetPassword(item)}
+                  >
+                    Redefinir senha
+                  </button>
+                  <button type="button" onClick={() => void toggleMember(item)}>
+                    {item.active ? "Desativar" : "Ativar"}
+                  </button>
+                </div>
               </div>
             ))
           )}

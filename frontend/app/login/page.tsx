@@ -206,9 +206,7 @@ function LoginForm() {
             </label>
 
             <div className="auth-v2-forgot">
-              <button type="button" onClick={() => setError(t.forgotSoon)}>
-                {t.forgotPassword}
-              </button>
+              <Link href="/forgot-password">{t.forgotPassword}</Link>
             </div>
 
             {error ? <p className="auth-v2-error">{error}</p> : null}

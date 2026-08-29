@@ -10,7 +10,7 @@ from app.auth import Principal,current_principal,require_roles
 from app.billing_guard import ensure_subscription_on_register,require_billing_access,subscription_access_payload
 from app.core.config import get_settings
 from app.core.database import get_session
-from app.core.security import create_access_token,hash_password,hash_refresh_token,new_refresh_token,verify_password
+from app.core.security import create_access_token,create_password_reset_token,decode_password_reset_token,hash_password,hash_refresh_token,new_refresh_token,verify_password
 from app.crypto import decrypt_secret,encrypt_secret
 from app.documents import extract_text_from_upload
 from app.models import (
@@ -23,10 +23,10 @@ from app.models import (
 from app.rag import embed_text,retrieve
 from app.schemas import (
     AgentFromPresetIn,AgentIn,AgentQueryIn,AgentStatusIn,BrandKitIn,CampaignIn,CampaignSpendRequestIn,CampaignStatusIn,ChannelIn,CheckoutIn,
-    EvolutionConnectIn,IncomingMessageIn,InboxThreadStatusIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,MetaConnectIn,
+    EvolutionConnectIn,ForgotPasswordIn,IncomingMessageIn,InboxThreadStatusIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,MetaConnectIn,
     MarketingDiagnosisIn,MarketingDiscoveryIn,MarketingEngagementIn,MarketingGovernanceIn,MarketingLeadIn,MarketingPackageIn,MarketingSpendIn,
     MarketingSpendReviewIn,OnboardingUpdateIn,OpportunityIn,OpportunityStageIn,OpportunityUpdateIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
-    FinanceSendIn,RegisterIn,TeamMemberIn,TeamMemberUpdateIn,TemplateSendIn,TokenPair,
+    FinanceSendIn,RegisterIn,ResetPasswordIn,TeamMemberIn,TeamMemberUpdateIn,TemplateSendIn,TokenPair,
 )
 
 router=APIRouter(prefix="/api/v1")
@@ -207,6 +207,57 @@ async def login(data:LoginIn,db:Db):
     db.add(RefreshSession(user_id=row.User.id,organization_id=row.Organization.id,token_hash=hashed,expires_at=datetime.now(UTC)+timedelta(days=get_settings().refresh_token_days)))
     await db.commit()
     return TokenPair(access_token=create_access_token(user_id=str(row.User.id),organization_id=str(row.Organization.id),role=row.Membership.role.value),refresh_token=raw)
+
+@router.post("/auth/forgot-password")
+async def forgot_password(data:ForgotPasswordIn,db:Db):
+    """Gera link de redefinição (1h). Sem SMTP: devolve o link na resposta se a conta existir."""
+    generic={"message":"Se a conta existir, use o link de redefinição (válido por 1 hora)."}
+    row=(await db.execute(
+        select(User,Organization,Membership)
+        .join(Membership,Membership.user_id==User.id)
+        .join(Organization,Organization.id==Membership.organization_id)
+        .where(and_(
+            User.email==data.email.strip().lower(),
+            Organization.slug==data.organization_slug.strip().lower(),
+            Membership.active.is_(True),
+            User.active.is_(True),
+        ))
+    )).first()
+    if not row:
+        return {**generic,"reset_url":None}
+    token=create_password_reset_token(user_id=str(row.User.id),organization_id=str(row.Organization.id))
+    base=get_settings().frontend_url.rstrip("/")
+    reset_url=f"{base}/reset-password?token={token}&org={row.Organization.slug}"
+    db.add(AuditLog(
+        organization_id=row.Organization.id,user_id=row.User.id,
+        action="auth.password_reset_requested",resource="user",detail=row.User.email,
+    ))
+    await db.commit()
+    return {**generic,"reset_url":reset_url,"expires_in_minutes":60}
+
+@router.post("/auth/reset-password")
+async def reset_password(data:ResetPasswordIn,db:Db):
+    try:
+        payload=decode_password_reset_token(data.token)
+    except Exception:
+        raise HTTPException(400,"Link inválido ou expirado. Solicite uma nova recuperação.") from None
+    user_id=parse_uuid(str(payload.get("sub") or ""),"User")
+    org_id=parse_uuid(str(payload.get("org") or ""),"Organization")
+    user=await db.scalar(select(User).where(and_(User.id==user_id,User.active.is_(True))))
+    if not user:raise HTTPException(400,"Link inválido ou expirado. Solicite uma nova recuperação.")
+    membership=await db.scalar(select(Membership).where(and_(Membership.user_id==user.id,Membership.organization_id==org_id,Membership.active.is_(True))))
+    if not membership:raise HTTPException(400,"Link inválido ou expirado. Solicite uma nova recuperação.")
+    user.password_hash=hash_password(data.password)
+    sessions=(await db.scalars(select(RefreshSession).where(and_(RefreshSession.user_id==user.id,RefreshSession.revoked_at.is_(None))))).all()
+    now=datetime.now(UTC)
+    for s in sessions:
+        s.revoked_at=now
+    db.add(AuditLog(
+        organization_id=org_id,user_id=user.id,
+        action="auth.password_reset",resource="user",detail=user.email,
+    ))
+    await db.commit()
+    return {"status":"ok","message":"Senha atualizada. Entre com a nova senha.","organization_slug":(await db.scalar(select(Organization.slug).where(Organization.id==org_id)))}
 
 @router.post("/auth/refresh",response_model=TokenPair)
 async def refresh(data:RefreshIn,db:Db):
@@ -2275,6 +2326,9 @@ def _human_activity(action:str,resource:str,detail:str|None)->tuple[str,str]:
         "agent.created":("Agente adicionado à equipe",d or "Novo agente"),
         "agent.status_changed":("Status de agente atualizado",d.replace(":"," → ") if d else "Alteração de status"),
         "agent.queried":("Consulta a um agente",d or "Pergunta respondida"),
+        "auth.password_reset_requested":("Recuperação de senha solicitada",d or "Pedido"),
+        "auth.password_reset":("Senha redefinida",d or "Nova senha"),
+        "team.password_reset":("Senha temporária gerada na Equipe",d or "Membro"),
         "knowledge.ingested":("Conteúdo publicado na base",d.split(":")[0] if d else "Novo documento"),
         "settings.llm_updated":("Inteligência (IA) conectada",d or "Chave atualizada"),
         "settings.brand_kit_updated":("Kit de marca atualizado",d or "Identidade da empresa"),
@@ -2356,6 +2410,25 @@ async def update_team_member(membership_id:str,data:TeamMemberUpdateIn,p:Annotat
     if data.active is not None:item.active=data.active
     db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="team.member_updated",resource="membership",detail=f"{item.id}:{item.role.value}:{item.active}"))
     await db.commit();return {"membership_id":str(item.id),"role":item.role.value,"active":item.active}
+
+@router.post("/team/members/{membership_id}/reset-password")
+async def reset_team_member_password(membership_id:str,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN))],db:Db):
+    """Admin gera senha temporária (mostrada uma vez) para o membro."""
+    await require_billing_access(p.organization_id,db)
+    item=await db.scalar(select(Membership).where(and_(Membership.id==parse_uuid(membership_id,"Membership"),Membership.organization_id==p.organization_id)))
+    if not item:raise HTTPException(404,"Membership not found")
+    if item.role==Role.OWNER and p.role!=Role.OWNER:raise HTTPException(403,"Only owners can reset owner passwords")
+    user=await db.scalar(select(User).where(User.id==item.user_id))
+    if not user:raise HTTPException(404,"User not found")
+    temp=secrets.token_urlsafe(10)
+    user.password_hash=hash_password(temp)
+    sessions=(await db.scalars(select(RefreshSession).where(and_(RefreshSession.user_id==user.id,RefreshSession.revoked_at.is_(None))))).all()
+    now=datetime.now(UTC)
+    for s in sessions:
+        s.revoked_at=now
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="team.password_reset",resource="membership",detail=user.email))
+    await db.commit()
+    return {"membership_id":str(item.id),"email":user.email,"temporary_password":temp,"message":"Senha temporária gerada. Copie agora — não será mostrada de novo."}
 
 @router.post("/demo/seed-nexus")
 async def seed_nexus(p:Annotated[Principal,Depends(require_roles(Role.OWNER))],db:Db):

@@ -13,6 +13,14 @@ class LoginIn(BaseModel):
     password:str
     organization_slug:str
 
+class ForgotPasswordIn(BaseModel):
+    email:EmailStr
+    organization_slug:str=Field(pattern=r"^[a-z0-9-]+$")
+
+class ResetPasswordIn(BaseModel):
+    token:str=Field(min_length=20,max_length=2000)
+    password:str=Field(min_length=8,max_length=128)
+
 class RefreshIn(BaseModel):
     refresh_token:str
 
