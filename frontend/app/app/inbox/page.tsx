@@ -1,9 +1,14 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { apiJson } from "../../lib/api";
 import { formatDateTime } from "../../lib/format";
-import type { Channel, InboxMessage, InboxThread } from "../../lib/types";
+import type {
+  Channel,
+  InboxMessage,
+  InboxThread,
+  WhatsAppTemplate,
+} from "../../lib/types";
 
 export default function InboxPage() {
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -20,7 +25,14 @@ export default function InboxPage() {
   const [qrImage, setQrImage] = useState<string | null>(null);
   const [qrInfo, setQrInfo] = useState("");
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [templates, setTemplates] = useState<WhatsAppTemplate[]>([]);
+  const [templatesHint, setTemplatesHint] = useState("");
+  const [templatesSource, setTemplatesSource] = useState("");
+  const [selectedTemplate, setSelectedTemplate] = useState("");
+  const [templateLang, setTemplateLang] = useState("pt_BR");
+  const [templateParams, setTemplateParams] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -186,15 +198,51 @@ export default function InboxPage() {
   async function openThread(threadId: string) {
     setSelectedThread(threadId);
     setError("");
+    setMessage("");
     try {
-      setMessages(
-        await apiJson<InboxMessage[]>(
+      const [msgs, th] = await Promise.all([
+        apiJson<InboxMessage[]>(
           `/api/v1/inbox/threads/${threadId}/messages`,
         ),
-      );
-      await load();
+        apiJson<InboxThread[]>("/api/v1/inbox/threads"),
+      ]);
+      setMessages(msgs);
+      setThreads(th);
+      const ch = await apiJson<Channel[]>("/api/v1/channels");
+      setChannels(ch);
+      const thread = th.find((t) => t.id === threadId);
+      if (thread?.provider === "meta" && thread.channel_id) {
+        await loadTemplates(thread.channel_id);
+      } else {
+        setTemplates([]);
+        setSelectedTemplate("");
+      }
     } catch (e) {
       setError((e as Error).message);
+    }
+  }
+
+  async function loadTemplates(channelId: string) {
+    try {
+      const result = await apiJson<{
+        templates: WhatsAppTemplate[];
+        hint?: string;
+        source?: string;
+      }>(`/api/v1/channels/${channelId}/meta/templates`);
+      setTemplates(result.templates || []);
+      setTemplatesHint(result.hint || "");
+      setTemplatesSource(result.source || "");
+      const first = result.templates?.[0];
+      if (first) {
+        setSelectedTemplate(first.name);
+        setTemplateLang(first.language || "pt_BR");
+        setTemplateParams(
+          Array.from({ length: first.body_param_count || 0 }, () => ""),
+        );
+      }
+    } catch (e) {
+      setTemplates([]);
+      setTemplatesHint((e as Error).message);
     }
   }
 
@@ -219,9 +267,38 @@ export default function InboxPage() {
     }
   }
 
+  async function sendTemplate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedThread || !selectedTemplate) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await apiJson(`/api/v1/inbox/threads/${selectedThread}/template`, {
+        method: "POST",
+        body: JSON.stringify({
+          template_name: selectedTemplate,
+          language: templateLang,
+          body_params: templateParams.filter((p) => p.trim()),
+        }),
+      });
+      setMessage(`Template “${selectedTemplate}” enviado.`);
+      await openThread(selectedThread);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const activeThread = threads.find((t) => t.id === selectedThread);
+  const activeTemplate = useMemo(
+    () => templates.find((t) => t.name === selectedTemplate),
+    [templates, selectedTemplate],
+  );
   const providerLabel = (p?: string) =>
     p === "meta" ? "Meta oficial" : p === "evolution" ? "Evolution" : "Webhook";
+  const metaChannel = channels.find((c) => c.provider === "meta");
 
   return (
     <>
@@ -235,6 +312,7 @@ export default function InboxPage() {
         </button>
       </header>
       {error && <p className="error">{error}</p>}
+      {message && <p className="success">{message}</p>}
       {evolutionInfo && <p className="success">{evolutionInfo}</p>}
       {qrImage && (
         <div className="secret-box">
@@ -362,13 +440,104 @@ export default function InboxPage() {
               )}
               <form onSubmit={sendMessage}>
                 <label>
-                  Resposta
+                  Resposta (janela 24h)
                   <textarea name="text" required minLength={1} />
                 </label>
                 <button className="primary" disabled={busy}>
                   Enviar mensagem
                 </button>
               </form>
+              {activeThread?.provider === "meta" && (
+                <form
+                  onSubmit={sendTemplate}
+                  style={{ marginTop: 16, display: "grid", gap: 8 }}
+                >
+                  <div className="panel-title" style={{ margin: 0 }}>
+                    <div>
+                      <span>TEMPLATE META</span>
+                      <h2 style={{ fontSize: 16 }}>Fora da janela 24h</h2>
+                    </div>
+                    {activeThread.channel_id && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void loadTemplates(activeThread.channel_id!)
+                        }
+                      >
+                        Atualizar lista
+                      </button>
+                    )}
+                  </div>
+                  <p style={{ margin: 0, opacity: 0.85, lineHeight: 1.45 }}>
+                    Templates aprovados na Meta permitem iniciar conversa
+                    (cobrança, follow-up).{" "}
+                    {templatesSource === "suggested"
+                      ? "Lista sugerida — crie no Business Manager com o mesmo nome."
+                      : "Lista da sua WABA."}
+                  </p>
+                  {templatesHint && (
+                    <small style={{ opacity: 0.8 }}>{templatesHint}</small>
+                  )}
+                  <label>
+                    Template
+                    <select
+                      value={selectedTemplate}
+                      onChange={(e) => {
+                        const name = e.target.value;
+                        setSelectedTemplate(name);
+                        const tpl = templates.find((t) => t.name === name);
+                        setTemplateLang(tpl?.language || "pt_BR");
+                        setTemplateParams(
+                          Array.from(
+                            { length: tpl?.body_param_count || 0 },
+                            () => "",
+                          ),
+                        );
+                      }}
+                      required
+                    >
+                      <option value="">Selecione</option>
+                      {templates.map((t) => (
+                        <option key={`${t.name}-${t.language}`} value={t.name}>
+                          {t.name} ({t.language})
+                          {t.status === "SUGGESTED" ? " · sugerido" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {activeTemplate?.blurb && (
+                    <small style={{ opacity: 0.85 }}>{activeTemplate.blurb}</small>
+                  )}
+                  <label>
+                    Idioma
+                    <input
+                      value={templateLang}
+                      onChange={(e) => setTemplateLang(e.target.value)}
+                      required
+                    />
+                  </label>
+                  {templateParams.map((val, i) => (
+                    <label key={`p-${i}`}>
+                      Variável {i + 1}
+                      {activeTemplate?.param_hints?.[i]
+                        ? ` (${activeTemplate.param_hints[i]})`
+                        : ""}
+                      <input
+                        value={val}
+                        onChange={(e) => {
+                          const next = [...templateParams];
+                          next[i] = e.target.value;
+                          setTemplateParams(next);
+                        }}
+                        required
+                      />
+                    </label>
+                  ))}
+                  <button className="primary" disabled={busy || !selectedTemplate}>
+                    Enviar template
+                  </button>
+                </form>
+              )}
             </>
           )}
         </article>
@@ -433,13 +602,19 @@ export default function InboxPage() {
                 />
               </label>
               <label>
-                WABA ID (opcional)
+                WABA ID (recomendado para templates)
                 <input name="waba_id" placeholder="WhatsApp Business Account ID" />
               </label>
               <button className="primary" disabled={busy}>
                 Conectar Meta Cloud API
               </button>
             </form>
+            {metaChannel && (
+              <p className="pricing-note" style={{ marginTop: 12 }}>
+                Canal Meta ativo. Abra uma conversa para enviar templates fora
+                da janela de 24h.
+              </p>
+            )}
           </article>
 
           <article className="panel">

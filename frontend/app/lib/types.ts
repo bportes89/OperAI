@@ -68,9 +68,22 @@ export type InboxThread = {
   contact_name: string;
   phone: string;
   channel: string;
+  channel_id?: string;
+  provider?: string;
   status: string;
   unread_count: number;
   last_message_at?: string;
+};
+
+export type WhatsAppTemplate = {
+  name: string;
+  language: string;
+  category?: string;
+  status?: string;
+  body_param_count?: number;
+  blurb?: string;
+  param_hints?: string[];
+  source?: string;
 };
 
 export type InboxMessage = {

@@ -26,7 +26,7 @@ from app.schemas import (
     EvolutionConnectIn,IncomingMessageIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,MetaConnectIn,
     MarketingDiagnosisIn,MarketingDiscoveryIn,MarketingEngagementIn,MarketingGovernanceIn,MarketingLeadIn,MarketingPackageIn,MarketingSpendIn,
     MarketingSpendReviewIn,OnboardingUpdateIn,OpportunityIn,OpportunityStageIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
-    FinanceSendIn,RegisterIn,TeamMemberIn,TeamMemberUpdateIn,TokenPair,
+    FinanceSendIn,RegisterIn,TeamMemberIn,TeamMemberUpdateIn,TemplateSendIn,TokenPair,
 )
 
 router=APIRouter(prefix="/api/v1")
@@ -815,7 +815,7 @@ async def whatsapp_webhook(channel_key:str,data:IncomingMessageIn,db:Db,x_operai
 @router.get("/inbox/threads")
 async def inbox_threads(p:Annotated[Principal,Depends(current_principal)],db:Db):
     rows=(await db.execute(select(InboxThread,Contact,Channel).join(Contact,Contact.id==InboxThread.contact_id).join(Channel,Channel.id==InboxThread.channel_id).where(InboxThread.organization_id==p.organization_id).order_by(InboxThread.last_message_at.desc()))).all()
-    return [{"id":str(t.id),"contact_name":c.name,"phone":c.phone,"channel":ch.name,"status":t.status,"unread_count":t.unread_count,"last_message_at":t.last_message_at} for t,c,ch in rows]
+    return [{"id":str(t.id),"contact_name":c.name,"phone":c.phone,"channel":ch.name,"channel_id":str(ch.id),"provider":ch.provider,"status":t.status,"unread_count":t.unread_count,"last_message_at":t.last_message_at} for t,c,ch in rows]
 
 @router.get("/inbox/threads/{thread_id}/messages")
 async def inbox_messages(thread_id:str,p:Annotated[Principal,Depends(current_principal)],db:Db):
@@ -825,6 +825,49 @@ async def inbox_messages(thread_id:str,p:Annotated[Principal,Depends(current_pri
     rows=(await db.scalars(select(ChannelMessage).where(and_(ChannelMessage.thread_id==thread.id,ChannelMessage.organization_id==p.organization_id)).order_by(ChannelMessage.created_at))).all()
     await db.commit()
     return [{"id":str(x.id),"direction":x.direction,"content":x.content,"status":x.status,"created_at":x.created_at} for x in rows]
+
+def _meta_channel_creds(channel:Channel)->tuple[str,str,str|None]:
+    cfg=channel.config or {}
+    phone_number_id=str(cfg.get("phone_number_id") or channel.instance_name or "")
+    token_enc=cfg.get("access_token_encrypted")
+    if not phone_number_id or not token_enc:
+        raise HTTPException(409,"Canal Meta sem credenciais")
+    waba=cfg.get("waba_id")
+    return phone_number_id,decrypt_secret(token_enc),str(waba) if waba else None
+
+@router.get("/channels/{channel_id}/meta/templates")
+async def meta_list_templates(channel_id:str,p:Annotated[Principal,Depends(current_principal)],db:Db):
+    """Lista templates aprovados na Meta; se WABA ausente/falhar, devolve catálogo sugerido."""
+    channel=await db.scalar(select(Channel).where(and_(Channel.id==parse_uuid(channel_id,"Channel"),Channel.organization_id==p.organization_id)))
+    if not channel:raise HTTPException(404,"Channel not found")
+    if channel.provider!="meta":raise HTTPException(409,"Canal não é Meta Cloud API")
+    phone_number_id,token,waba_id=_meta_channel_creds(channel)
+    source="suggested"
+    templates=[]
+    error=None
+    if waba_id:
+        try:
+            templates=await meta_whatsapp.list_message_templates(waba_id,token)
+            source="meta"
+        except Exception as exc:
+            error=str(exc)[:300]
+            templates=[]
+    if not templates:
+        templates=[{**t,"source":"suggested"} for t in meta_whatsapp.STARTER_TEMPLATES]
+        source="suggested"
+    return {
+        "channel_id":str(channel.id),
+        "phone_number_id":phone_number_id,
+        "waba_id":waba_id,
+        "source":source,
+        "error":error,
+        "templates":templates,
+        "hint":(
+            "Templates aprovados na sua WABA."
+            if source=="meta"
+            else "Cadastre templates no Meta Business Manager com estes nomes (ou informe o WABA ID no canal) e aguarde aprovação — especialmente MARKETING."
+        ),
+    }
 
 @router.post("/inbox/threads/{thread_id}/messages",status_code=202)
 async def queue_outgoing_message(thread_id:str,data:OutgoingMessageIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER,Role.OPERATOR))],db:Db):
@@ -842,12 +885,9 @@ async def queue_outgoing_message(thread_id:str,data:OutgoingMessageIn,p:Annotate
             except Exception as exc:
                 status="failed";error=str(exc)[:300]
         elif channel.provider=="meta":
-            cfg=channel.config or {}
-            phone_number_id=str(cfg.get("phone_number_id") or channel.instance_name or "")
-            token_enc=cfg.get("access_token_encrypted")
             try:
-                if not token_enc or not phone_number_id:raise ValueError("Canal Meta sem credenciais")
-                await meta_whatsapp.send_text(phone_number_id,decrypt_secret(token_enc),contact.phone,data.text)
+                phone_number_id,token,_waba=_meta_channel_creds(channel)
+                await meta_whatsapp.send_text(phone_number_id,token,contact.phone,data.text)
                 status="sent"
             except Exception as exc:
                 status="failed";error=str(exc)[:300]
@@ -855,6 +895,47 @@ async def queue_outgoing_message(thread_id:str,data:OutgoingMessageIn,p:Annotate
     thread.last_message_at=datetime.now(UTC)
     db.add_all([item,AuditLog(organization_id=p.organization_id,user_id=p.user_id,action=f"message.{status}",resource="inbox_thread",detail=str(thread.id))])
     await db.commit();await db.refresh(item);return {"id":str(item.id),"status":item.status,"error":error}
+
+@router.post("/inbox/threads/{thread_id}/template",status_code=202)
+async def send_thread_template(thread_id:str,data:TemplateSendIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER,Role.OPERATOR))],db:Db):
+    """Envia template aprovado (fora da janela 24h) via Meta Cloud API."""
+    await require_billing_access(p.organization_id,db)
+    thread=await db.scalar(select(InboxThread).where(and_(InboxThread.id==parse_uuid(thread_id,"Thread"),InboxThread.organization_id==p.organization_id)))
+    if not thread:raise HTTPException(404,"Thread not found")
+    channel=await db.scalar(select(Channel).where(Channel.id==thread.channel_id))
+    contact=await db.scalar(select(Contact).where(Contact.id==thread.contact_id))
+    if not channel or not contact:raise HTTPException(404,"Canal ou contato não encontrado")
+    if channel.provider!="meta":
+        raise HTTPException(409,"Templates oficiais só funcionam no canal Meta Cloud API")
+    phone_number_id,token,_waba=_meta_channel_creds(channel)
+    preview=f"[template:{data.template_name}]"
+    if data.body_params:
+        preview+=" "+" · ".join(data.body_params[:6])
+    status="sent";error=None
+    try:
+        await meta_whatsapp.send_template(
+            phone_number_id,token,contact.phone,
+            data.template_name,data.language,data.body_params,
+        )
+    except Exception as exc:
+        status="failed";error=str(exc)[:400]
+    item=ChannelMessage(
+        organization_id=p.organization_id,channel_id=thread.channel_id,thread_id=thread.id,
+        external_message_id=f"tpl_{secrets.token_hex(10)}",direction="outbound",content=preview[:12000],status=status,
+    )
+    thread.last_message_at=datetime.now(UTC)
+    db.add_all([
+        item,
+        AuditLog(
+            organization_id=p.organization_id,user_id=p.user_id,
+            action="message.template_sent" if status=="sent" else "message.template_failed",
+            resource="inbox_thread",detail=f"{data.template_name}:{contact.phone}",
+        ),
+    ])
+    await db.commit();await db.refresh(item)
+    if status!="sent":
+        raise HTTPException(502,f"Falha ao enviar template: {error}")
+    return {"id":str(item.id),"status":item.status,"template_name":data.template_name,"preview":preview}
 
 @router.get("/finance/receivables")
 async def receivables(p:Annotated[Principal,Depends(current_principal)],db:Db):
@@ -1974,6 +2055,8 @@ def _human_activity(action:str,resource:str,detail:str|None)->tuple[str,str]:
         "campaign.status_changed":("Campanha atualizada",d.replace(":"," → ") if d else "Status alterado"),
         "message.sent":("Mensagem enviada no WhatsApp",d or "Envio"),
         "message.received":("Mensagem recebida no WhatsApp",d or "Entrada"),
+        "message.template_sent":("Template WhatsApp enviado",d or "Meta"),
+        "message.template_failed":("Falha ao enviar template WhatsApp",d or "Meta"),
         "marketing.diagnosis_saved":("Marketing: diagnóstico salvo","Playbook Essencial"),
         "marketing.discovery_saved":("Marketing: descoberta salva","Playbook Essencial"),
         "marketing.plan_generated":("Plano de Marketing gerado",d or "Plano Essencial"),

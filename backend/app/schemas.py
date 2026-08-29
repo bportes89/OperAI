@@ -75,6 +75,11 @@ class IncomingMessageIn(BaseModel):
 class OutgoingMessageIn(BaseModel):
     text:str=Field(min_length=1,max_length=12000)
 
+class TemplateSendIn(BaseModel):
+    template_name:str=Field(min_length=2,max_length=120)
+    language:str=Field(default="pt_BR",max_length=12)
+    body_params:list[str]=Field(default_factory=list)
+
 class ReceivableIn(BaseModel):
     customer_name:str=Field(min_length=2,max_length=180)
     description:str=Field(min_length=2,max_length=240)
