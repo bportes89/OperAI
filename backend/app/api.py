@@ -13,7 +13,7 @@ from app.core.security import create_access_token,hash_password,hash_refresh_tok
 from app.crypto import decrypt_secret,encrypt_secret
 from app.models import (
     Agent,AgentTask,AuditLog,Channel,ChannelMessage,Contact,Conversation,ConversationMessage,
-    InboxThread,KnowledgeChunk,KnowledgeDocument,LlmCredential,MarketingCampaign,Membership,
+    InboxThread,KnowledgeChunk,KnowledgeDocument,LlmCredential,MarketingCampaign,MarketingPlaybook,Membership,
     Opportunity,Organization,OrganizationOnboarding,OrganizationSubscription,Receivable,
     ReceivablePayment,RefreshSession,Role,SaaSPlan,User,
 )
@@ -21,7 +21,7 @@ from app.rag import embed_text,retrieve
 from app.schemas import (
     AgentIn,AgentQueryIn,AgentStatusIn,CampaignIn,CampaignStatusIn,ChannelIn,CheckoutIn,
     EvolutionConnectIn,IncomingMessageIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,
-    OnboardingUpdateIn,OpportunityIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
+    MarketingDiagnosisIn,MarketingDiscoveryIn,OnboardingUpdateIn,OpportunityIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
     RegisterIn,TeamMemberIn,TeamMemberUpdateIn,TokenPair,
 )
 
@@ -616,6 +616,201 @@ async def change_campaign_status(campaign_id:str,data:CampaignStatusIn,p:Annotat
     db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="campaign.status_changed",resource="marketing_campaign",detail=f"{item.name}:{data.status}"))
     await db.commit();return {"id":str(item.id),"status":item.status}
 
+def _playbook_out(item:MarketingPlaybook)->dict:
+    return {
+        "id":str(item.id),
+        "package":item.package,
+        "step":item.step,
+        "diagnosis":item.diagnosis or {},
+        "discovery":item.discovery or {},
+        "diagnosis_summary":item.diagnosis_summary,
+        "action_plan":item.action_plan,
+        "posts":item.posts or [],
+        "agent_id":str(item.agent_id) if item.agent_id else None,
+        "updated_at":item.updated_at.isoformat() if item.updated_at else None,
+    }
+
+async def _get_or_create_playbook(p:Principal,db:AsyncSession)->MarketingPlaybook:
+    item=await db.scalar(select(MarketingPlaybook).where(MarketingPlaybook.organization_id==p.organization_id))
+    if item:return item
+    item=MarketingPlaybook(organization_id=p.organization_id,created_by=p.user_id,package="essencial",step="diagnosis",diagnosis={},discovery={})
+    db.add(item);await db.commit();await db.refresh(item);return item
+
+async def _ensure_marketing_agent(org_id:uuid.UUID,user_id:uuid.UUID,db:AsyncSession)->Agent:
+    agent=await db.scalar(select(Agent).where(and_(Agent.organization_id==org_id,Agent.agent_type=="marketing")).order_by(Agent.created_at.asc()))
+    if agent:
+        if agent.status!="active":
+            agent.status="active"
+        return agent
+    agent=Agent(
+        organization_id=org_id,
+        name="Marketing Gestor",
+        agent_type="marketing",
+        status="active",
+        instructions=(
+            "Você coordena o pacote Essencial (Gestor + Redação + Mídias). "
+            "Diagnostique antes de produzir. Priorize canais baratos e CTA que vire contato."
+        ),
+    )
+    db.add(agent);await db.flush()
+    db.add(AuditLog(organization_id=org_id,user_id=user_id,action="agent.created",resource="agent",detail=agent.name))
+    return agent
+
+def _fallback_marketing_plan(diagnosis:dict,discovery:dict)->tuple[str,str,list[dict]]:
+    audience=discovery.get("ideal_customer") or "cliente ideal ainda a detalhar"
+    budget=discovery.get("monthly_budget") or "não informado"
+    capacity=discovery.get("lead_capacity") or "capacidade não informada"
+    channels=diagnosis.get("channels_active") or "redes sociais"
+    summary=(
+        f"As is: canais ({channels}); frequência {diagnosis.get('frequency','n/d')}; "
+        f"resultados comerciais {diagnosis.get('commercial_results') or 'não medidos'}."
+    )
+    plan=(
+        "## Plano Essencial (30 dias)\n\n"
+        f"**Público:** {audience}\n"
+        f"**Orçamento informado:** {budget}\n"
+        f"**Capacidade de leads:** {capacity}\n\n"
+        "### Prioridade de canais\n"
+        "1. Perfil da empresa no Google + SEO básico (baixo custo, descoberta)\n"
+        "2. Redes sociais orgânicas como vitrine (não como único vendedor)\n"
+        "3. WhatsApp / e-mail para converter quem já demonstrou interesse\n"
+        "4. Mídia paga só depois do orgânico estabilizar e com teto de gasto\n\n"
+        "### Próximos passos\n"
+        "- Publicar 4 peças com CTA claro para contato\n"
+        "- Registrar todo interesse no CRM/Inbox\n"
+        "- Revisar engajamento semanalmente com o Agente Gestor\n"
+    )
+    diff=discovery.get("differentiators") or "o diferencial da empresa"
+    posts=[
+        {"title":"Quem somos na prática","channel":"social","audience":audience,
+         "content":f"Muita gente nos conhece pelas redes — poucos sabem {diff}. "
+                   f"Se isso faz sentido para você, responda este post ou chame no WhatsApp. CTA: falar com a equipe."},
+        {"title":"Problema que resolvemos","channel":"social","audience":audience,
+         "content":f"Se você se identifica com o desafio do nosso cliente ideal ({audience}), "
+                   "podemos ajudar com um próximo passo simples. CTA: pedir conversa / formulário."},
+        {"title":"Prova de valor","channel":"email","audience":audience,
+         "content":f"Assunto: um jeito direto de avançar. Corpo: com base no que já fazemos em {channels}, "
+                   f"propomos um caminho curto. Responda este e-mail para agendar. CTA: responder."},
+        {"title":"Convite WhatsApp","channel":"whatsapp","audience":audience,
+         "content":f"Oi! Vi seu interesse no nosso conteúdo. Com orçamento {budget} e capacidade {capacity}, "
+                   "posso te orientar no próximo passo sem enrolação. CTA: continuar a conversa."},
+    ]
+    return summary,plan,posts
+
+@router.get("/marketing/playbook")
+async def get_marketing_playbook(p:Annotated[Principal,Depends(current_principal)],db:Db):
+    item=await _get_or_create_playbook(p,db)
+    return _playbook_out(item)
+
+@router.put("/marketing/playbook/diagnosis")
+async def save_marketing_diagnosis(data:MarketingDiagnosisIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    item=await _get_or_create_playbook(p,db)
+    item.diagnosis=data.model_dump()
+    item.step="discovery"
+    item.updated_at=datetime.now(UTC)
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="marketing.diagnosis_saved",resource="marketing_playbook",detail="essencial"))
+    await db.commit();await db.refresh(item)
+    return _playbook_out(item)
+
+@router.put("/marketing/playbook/discovery")
+async def save_marketing_discovery(data:MarketingDiscoveryIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    item=await _get_or_create_playbook(p,db)
+    if not item.diagnosis:raise HTTPException(409,"Complete o diagnóstico antes da descoberta")
+    item.discovery=data.model_dump()
+    item.step="plan"
+    item.updated_at=datetime.now(UTC)
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="marketing.discovery_saved",resource="marketing_playbook",detail="essencial"))
+    await db.commit();await db.refresh(item)
+    return _playbook_out(item)
+
+@router.post("/marketing/playbook/generate")
+async def generate_marketing_playbook(p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    item=await _get_or_create_playbook(p,db)
+    if not item.diagnosis or not item.discovery:raise HTTPException(409,"Diagnóstico e descoberta são obrigatórios")
+    agent=await _ensure_marketing_agent(p.organization_id,p.user_id,db)
+    item.agent_id=agent.id
+    rows=(await db.execute(select(KnowledgeChunk,KnowledgeDocument.title).join(KnowledgeDocument,KnowledgeDocument.id==KnowledgeChunk.document_id).where(KnowledgeChunk.organization_id==p.organization_id))).all()
+    sources=retrieve("plano de marketing diagnóstico descoberta posicionamento",list(rows),5) if rows else []
+    question=(
+        "Com base no diagnóstico e na descoberta abaixo, atue como Agente Gestor (Essencial). "
+        "Entregue em português, neste formato exato:\n"
+        "### RESUMO\n(um parágrafo do as-is)\n"
+        "### PLANO\n(plano 30 dias com priorização de canais e investimento)\n"
+        "### POSTS\n"
+        "1. Título | canal(social|email|whatsapp) | público | texto com CTA\n"
+        "2. ...\n3. ...\n4. ...\n"
+        "Não sugira Ads pagos se o orçamento for zero ou muito baixo.\n\n"
+        f"DIAGNÓSTICO:\n{item.diagnosis}\n\nDESCOBERTA:\n{item.discovery}"
+    )
+    answer,mode=await _org_llm_answer(p.organization_id,agent,question,sources,db)
+    summary,plan,posts=_fallback_marketing_plan(item.diagnosis,item.discovery)
+    if "### PLANO" in answer or "### RESUMO" in answer:
+        for part in answer.split("### "):
+            if not part.strip():continue
+            head,*rest=part.split("\n",1)
+            body=(rest[0] if rest else "").strip()
+            key=head.strip().upper()
+            if key.startswith("RESUMO") and body:summary=body
+            elif key.startswith("PLANO") and body:plan=body
+            elif key.startswith("POSTS") and body:
+                parsed=[]
+                for line in body.splitlines():
+                    line=line.strip()
+                    if not line or not line[0].isdigit():continue
+                    line=line.split(".",1)[-1].strip()
+                    bits=[b.strip() for b in line.split("|")]
+                    if len(bits)>=4:
+                        ch=bits[1].lower()
+                        if "whatsapp" in ch:ch="whatsapp"
+                        elif "email" in ch or "e-mail" in ch:ch="email"
+                        else:ch="social"
+                        parsed.append({"title":bits[0][:180],"channel":ch,"audience":bits[2][:240],"content":"|".join(bits[3:])[:12000]})
+                if len(parsed)>=2:posts=parsed[:4]
+    elif mode.startswith("byok") and answer.strip():
+        plan=answer
+    item.diagnosis_summary=summary
+    item.action_plan=plan
+    item.posts=posts
+    item.step="active"
+    item.updated_at=datetime.now(UTC)
+    db.add(AgentTask(
+        organization_id=p.organization_id,agent_id=agent.id,created_by=p.user_id,
+        idempotency_key=f"playbook:{item.id}:generate:{uuid.uuid4().hex[:8]}",
+        task_type="marketing.plan",title="Plano Marketing Essencial",priority="normal",status="completed",
+        input_data={"playbook_id":str(item.id)},result_data={"mode":mode,"posts":len(posts)},
+        completed_at=datetime.now(UTC),
+    ))
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="marketing.plan_generated",resource="marketing_playbook",detail=mode))
+    await db.commit();await db.refresh(item)
+    return _playbook_out(item)
+
+@router.post("/marketing/playbook/materialize")
+async def materialize_marketing_posts(p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    item=await _get_or_create_playbook(p,db)
+    if not item.posts:raise HTTPException(409,"Gere o plano antes de criar campanhas")
+    created=[]
+    for post in item.posts:
+        ch=post.get("channel") or "social"
+        if ch not in {"whatsapp","email","social"}:ch="social"
+        campaign=MarketingCampaign(
+            organization_id=p.organization_id,
+            created_by=p.user_id,
+            agent_id=item.agent_id,
+            name=str(post.get("title") or "Peça Essencial")[:180],
+            channel=ch,
+            audience=str(post.get("audience") or "público-alvo")[:240],
+            content=str(post.get("content") or "")[:12000],
+            status="draft",
+        )
+        db.add(campaign);created.append(campaign)
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="marketing.posts_materialized",resource="marketing_playbook",detail=str(len(created))))
+    await db.commit()
+    return {"created":len(created),"campaigns":[{"id":str(c.id),"name":c.name,"channel":c.channel,"status":c.status} for c in created]}
+
 @router.get("/analytics/overview")
 async def analytics_overview(p:Annotated[Principal,Depends(current_principal)],db:Db):
     opportunities=(await db.scalars(select(Opportunity).where(Opportunity.organization_id==p.organization_id))).all()
@@ -673,7 +868,7 @@ async def seed_nexus(p:Annotated[Principal,Depends(require_roles(Role.OWNER))],d
         ("Comercial Nexus","commercial","Você qualifica leads B2B e agenda demos OperAI."),
         ("WhatsApp Nexus","whatsapp","Você atende clientes no WhatsApp com respostas curtas e úteis."),
         ("Financeiro Nexus","finance","Você acompanha cobranças e explica status de recebíveis."),
-        ("Marketing Nexus","marketing","Você propõe campanhas e mensagens para aquisição."),
+        ("Marketing Nexus","marketing","Você é o Agente Gestor Essencial: diagnostique, descubra e só então proponha plano e peças com CTA."),
     ]
     for name,agent_type,instructions in defaults:
         if any(a.name==name for a in existing):continue

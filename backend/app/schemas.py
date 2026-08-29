@@ -92,6 +92,24 @@ class CampaignIn(BaseModel):
 class CampaignStatusIn(BaseModel):
     status:str=Field(pattern=r"^(draft|approved|scheduled|running|completed|cancelled)$")
 
+class MarketingDiagnosisIn(BaseModel):
+    channels_active:str=Field(min_length=2,max_length=2000)
+    content_types:str=Field(min_length=2,max_length=2000)
+    frequency:str=Field(min_length=2,max_length=500)
+    engagement_notes:str=Field(default="",max_length=4000)
+    brand_assets:str=Field(default="",max_length=2000)
+    commercial_results:str=Field(default="",max_length=2000)
+
+class MarketingDiscoveryIn(BaseModel):
+    competitors:str=Field(min_length=2,max_length=2000)
+    differentiators:str=Field(min_length=2,max_length=2000)
+    ideal_customer:str=Field(min_length=2,max_length=2000)
+    mission_values:str=Field(min_length=2,max_length=2000)
+    brand_avoid:str=Field(default="",max_length=1000)
+    lead_capacity:str=Field(min_length=1,max_length=500)
+    seasonality:str=Field(default="",max_length=1000)
+    monthly_budget:str=Field(min_length=1,max_length=500)
+
 class LlmSettingsIn(BaseModel):
     provider:str=Field(pattern=r"^(openai|groq|openrouter)$")
     model_name:str=Field(min_length=2,max_length=120)

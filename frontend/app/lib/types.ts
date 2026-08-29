@@ -124,6 +124,26 @@ export type Campaign = {
   response_count: number;
 };
 
+export type MarketingPost = {
+  title: string;
+  channel: string;
+  audience: string;
+  content: string;
+};
+
+export type MarketingPlaybook = {
+  id: string;
+  package: string;
+  step: string;
+  diagnosis: Record<string, string>;
+  discovery: Record<string, string>;
+  diagnosis_summary: string | null;
+  action_plan: string | null;
+  posts: MarketingPost[];
+  agent_id: string | null;
+  updated_at: string | null;
+};
+
 export type OnboardingState = {
   step: string;
   completed_at: string | null;

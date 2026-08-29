@@ -71,6 +71,22 @@ class AgentTask(Base):
 class MarketingCampaign(Base):
     __tablename__="marketing_campaigns";__table_args__=(Index("ix_marketing_campaign_tenant_status","organization_id","status"),)
     id:Mapped[uuid.UUID]=mapped_column(primary_key=True,default=uuid.uuid4);organization_id:Mapped[uuid.UUID]=mapped_column(ForeignKey("organizations.id",ondelete="CASCADE"),index=True);created_by:Mapped[uuid.UUID]=mapped_column(ForeignKey("users.id",ondelete="CASCADE"),index=True);agent_id:Mapped[uuid.UUID|None]=mapped_column(ForeignKey("agents.id",ondelete="SET NULL"),index=True);name:Mapped[str]=mapped_column(String(180));channel:Mapped[str]=mapped_column(String(30));audience:Mapped[str]=mapped_column(String(240));content:Mapped[str]=mapped_column(Text);status:Mapped[str]=mapped_column(String(30),default="draft");scheduled_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True));sent_count:Mapped[int]=mapped_column(Integer,default=0);delivered_count:Mapped[int]=mapped_column(Integer,default=0);response_count:Mapped[int]=mapped_column(Integer,default=0);created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now())
+class MarketingPlaybook(Base):
+    """Pacote Essencial: diagnóstico → descoberta → plano (Gestor + Redação + Mídias)."""
+    __tablename__="marketing_playbooks";__table_args__=(UniqueConstraint("organization_id"),)
+    id:Mapped[uuid.UUID]=mapped_column(primary_key=True,default=uuid.uuid4)
+    organization_id:Mapped[uuid.UUID]=mapped_column(ForeignKey("organizations.id",ondelete="CASCADE"),index=True)
+    created_by:Mapped[uuid.UUID]=mapped_column(ForeignKey("users.id",ondelete="CASCADE"),index=True)
+    agent_id:Mapped[uuid.UUID|None]=mapped_column(ForeignKey("agents.id",ondelete="SET NULL"),index=True)
+    package:Mapped[str]=mapped_column(String(40),default="essencial")
+    step:Mapped[str]=mapped_column(String(40),default="diagnosis")
+    diagnosis:Mapped[dict]=mapped_column(JSON,default=dict)
+    discovery:Mapped[dict]=mapped_column(JSON,default=dict)
+    diagnosis_summary:Mapped[str|None]=mapped_column(Text)
+    action_plan:Mapped[str|None]=mapped_column(Text)
+    posts:Mapped[list|None]=mapped_column(JSON)
+    created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now())
+    updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now(),onupdate=func.now())
 class AuditLog(Base):
     __tablename__="audit_logs"
     id:Mapped[uuid.UUID]=mapped_column(primary_key=True,default=uuid.uuid4);organization_id:Mapped[uuid.UUID]=mapped_column(index=True);user_id:Mapped[uuid.UUID]=mapped_column(index=True);action:Mapped[str]=mapped_column(String(80));resource:Mapped[str]=mapped_column(String(120));detail:Mapped[str|None]=mapped_column(Text);created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now(),index=True)
