@@ -38,6 +38,19 @@ export type KnowledgeDocument = {
   chunk_count: number;
 };
 
+export type BrandKit = {
+  configured: boolean;
+  brand_name: string;
+  tagline: string;
+  voice_tone: string;
+  primary_color: string;
+  secondary_color: string;
+  logo_url: string;
+  avoid: string;
+  notes: string;
+  updated_at?: string | null;
+};
+
 export type SearchHit = {
   chunk_id: string;
   document: string;

@@ -17,12 +17,12 @@ from app.models import (
     Agent,AgentTask,AuditLog,Channel,ChannelMessage,Contact,Conversation,ConversationMessage,
     InboxThread,KnowledgeChunk,KnowledgeDocument,LlmCredential,MarketingCampaign,MarketingEngagement,MarketingGovernance,
     MarketingLead,MarketingPlaybook,MarketingSpendRequest,Membership,
-    Opportunity,Organization,OrganizationOnboarding,OrganizationSubscription,Receivable,
+    Opportunity,Organization,OrganizationBrandKit,OrganizationOnboarding,OrganizationSubscription,Receivable,
     ReceivablePayment,RefreshSession,Role,SaaSPlan,User,
 )
 from app.rag import embed_text,retrieve
 from app.schemas import (
-    AgentFromPresetIn,AgentIn,AgentQueryIn,AgentStatusIn,CampaignIn,CampaignSpendRequestIn,CampaignStatusIn,ChannelIn,CheckoutIn,
+    AgentFromPresetIn,AgentIn,AgentQueryIn,AgentStatusIn,BrandKitIn,CampaignIn,CampaignSpendRequestIn,CampaignStatusIn,ChannelIn,CheckoutIn,
     EvolutionConnectIn,IncomingMessageIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,MetaConnectIn,
     MarketingDiagnosisIn,MarketingDiscoveryIn,MarketingEngagementIn,MarketingGovernanceIn,MarketingLeadIn,MarketingPackageIn,MarketingSpendIn,
     MarketingSpendReviewIn,OnboardingUpdateIn,OpportunityIn,OpportunityStageIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
@@ -93,9 +93,11 @@ def _parse_evolution_inbound(payload:dict)->dict|None:
 async def _org_llm_answer(org_id:uuid.UUID,agent:Agent,question:str,sources:list[dict],db:AsyncSession,history:list[dict[str,str]]|None=None)->tuple[str,str]:
     context="\n\n".join(f"[{x['document']}] {x['content']}" for x in sources[:5])
     type_prompt=llm.AGENT_SYSTEM_PROMPTS.get(agent.agent_type,"Você é um agente OperAI profissional.")
+    brand_block=await _brand_kit_prompt(org_id,db)
     system="\n\n".join([
         type_prompt,
         f"Instruções do agente:\n{agent.instructions}",
+        brand_block or "Kit de marca: ainda não cadastrado — use tom profissional neutro em português brasileiro.",
         f"Contexto da base de conhecimento:\n{context or 'Sem documentos relevantes.'}",
     ])
     cred=await db.scalar(select(LlmCredential).where(LlmCredential.organization_id==org_id))
@@ -108,6 +110,63 @@ async def _org_llm_answer(org_id:uuid.UUID,agent:Agent,question:str,sources:list
     except Exception as exc:
         local=f"Com base nos documentos recuperados para '{question}':\n\n{context}" if sources else "Não encontrei informações na base de conhecimento desta empresa."
         return f"{local}\n\n(Aviso: falha no provedor LLM BYOK — {exc}. Verifique a chave em Configurações > LLM.)","local-rag-fallback"
+
+def _normalize_hex_color(value:str)->str:
+    raw=(value or "").strip()
+    if not raw:return ""
+    if not raw.startswith("#"):raw=f"#{raw}"
+    if len(raw)!=7 or any(c not in "0123456789abcdefABCDEF" for c in raw[1:]):
+        raise HTTPException(422,"Cor inválida. Use formato #RRGGBB.")
+    return raw.upper()
+
+def _brand_kit_out(item:OrganizationBrandKit|None)->dict:
+    if not item:
+        return {
+            "configured":False,
+            "brand_name":"","tagline":"","voice_tone":"",
+            "primary_color":"","secondary_color":"","logo_url":"",
+            "avoid":"","notes":"","updated_at":None,
+        }
+    filled=any([
+        item.brand_name.strip(),item.tagline.strip(),item.voice_tone.strip(),
+        item.primary_color.strip(),item.secondary_color.strip(),item.logo_url.strip(),
+        item.avoid.strip(),item.notes.strip(),
+    ])
+    return {
+        "configured":filled,
+        "brand_name":item.brand_name or "",
+        "tagline":item.tagline or "",
+        "voice_tone":item.voice_tone or "",
+        "primary_color":item.primary_color or "",
+        "secondary_color":item.secondary_color or "",
+        "logo_url":item.logo_url or "",
+        "avoid":item.avoid or "",
+        "notes":item.notes or "",
+        "updated_at":item.updated_at,
+    }
+
+async def _get_brand_kit(org_id:uuid.UUID,db:AsyncSession)->OrganizationBrandKit|None:
+    return await db.scalar(select(OrganizationBrandKit).where(OrganizationBrandKit.organization_id==org_id))
+
+async def _brand_kit_prompt(org_id:uuid.UUID,db:AsyncSession)->str:
+    item=await _get_brand_kit(org_id,db)
+    if not item:return ""
+    lines=[]
+    if item.brand_name.strip():lines.append(f"Nome da marca: {item.brand_name.strip()}")
+    if item.tagline.strip():lines.append(f"Slogan: {item.tagline.strip()}")
+    if item.voice_tone.strip():lines.append(f"Tom de voz: {item.voice_tone.strip()}")
+    colors=[]
+    if item.primary_color.strip():colors.append(f"primária {item.primary_color.strip()}")
+    if item.secondary_color.strip():colors.append(f"secundária {item.secondary_color.strip()}")
+    if colors:lines.append("Cores: "+", ".join(colors))
+    if item.logo_url.strip():lines.append(f"Logo: {item.logo_url.strip()}")
+    if item.avoid.strip():lines.append(f"Evitar / nunca dizer: {item.avoid.strip()}")
+    if item.notes.strip():lines.append(f"Notas de marca: {item.notes.strip()}")
+    if not lines:return ""
+    return (
+        "Kit de marca da empresa (obrigatório respeitar em textos, posts e atendimento):\n"
+        + "\n".join(f"- {line}" for line in lines)
+    )
 
 @router.get("/health")
 async def health():return {"status":"ok","service":"operai-api"}
@@ -308,6 +367,39 @@ async def put_llm_settings(data:LlmSettingsIn,p:Annotated[Principal,Depends(requ
     raw=data.api_key
     masked=(raw[:4]+"…" +raw[-4:]) if len(raw)>=8 else "••••"
     return {"configured":True,"provider":cred.provider,"model_name":cred.model_name,"api_key_masked":masked}
+
+@router.get("/settings/brand-kit")
+async def get_brand_kit(p:Annotated[Principal,Depends(current_principal)],db:Db):
+    return _brand_kit_out(await _get_brand_kit(p.organization_id,db))
+
+@router.put("/settings/brand-kit")
+async def put_brand_kit(data:BrandKitIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    primary=_normalize_hex_color(data.primary_color)
+    secondary=_normalize_hex_color(data.secondary_color)
+    logo=(data.logo_url or "").strip()
+    if logo and not (logo.startswith("https://") or logo.startswith("http://")):
+        raise HTTPException(422,"URL do logo deve começar com http:// ou https://")
+    item=await _get_brand_kit(p.organization_id,db)
+    if not item:
+        item=OrganizationBrandKit(organization_id=p.organization_id)
+        db.add(item)
+    item.brand_name=(data.brand_name or "").strip()[:120]
+    item.tagline=(data.tagline or "").strip()[:240]
+    item.voice_tone=(data.voice_tone or "").strip()[:2000]
+    item.primary_color=primary
+    item.secondary_color=secondary
+    item.logo_url=logo[:1000]
+    item.avoid=(data.avoid or "").strip()[:2000]
+    item.notes=(data.notes or "").strip()[:4000]
+    item.updated_at=datetime.now(UTC)
+    db.add(AuditLog(
+        organization_id=p.organization_id,user_id=p.user_id,
+        action="settings.brand_kit_updated",resource="organization_brand_kit",
+        detail=item.brand_name or "kit",
+    ))
+    await db.commit();await db.refresh(item)
+    return _brand_kit_out(item)
 
 async def _onboarding_detected(org_id:uuid.UUID,db:AsyncSession)->dict:
     llm_ok=await db.scalar(select(LlmCredential.id).where(LlmCredential.organization_id==org_id).limit(1))
@@ -2057,6 +2149,7 @@ def _human_activity(action:str,resource:str,detail:str|None)->tuple[str,str]:
         "agent.queried":("Consulta a um agente",d or "Pergunta respondida"),
         "knowledge.ingested":("Conteúdo publicado na base",d.split(":")[0] if d else "Novo documento"),
         "settings.llm_updated":("Inteligência (IA) conectada",d or "Chave atualizada"),
+        "settings.brand_kit_updated":("Kit de marca atualizado",d or "Identidade da empresa"),
         "receivable.created":("Cobrança lançada",d or "Novo recebível"),
         "receivable.paid":("Pagamento recebido",money_hint or d or "Recebimento confirmado"),
         "finance.follow_up_drafted":("Lembrete de cobrança preparado",d or "Follow-up"),

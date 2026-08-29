@@ -6,6 +6,7 @@ import { apiJson } from "../../lib/api";
 import {
   CAMPAIGN_STATUS_LABELS,
   CAMPAIGN_TRANSITIONS,
+  type BrandKit,
   type Campaign,
   type MarketingConversion,
   type MarketingEngagement,
@@ -60,6 +61,7 @@ export default function MarketingPage() {
   const [spends, setSpends] = useState<MarketingSpendRequest[]>([]);
   const [growth, setGrowth] = useState<MarketingGrowth | null>(null);
   const [engagements, setEngagements] = useState<MarketingEngagement[]>([]);
+  const [brandKit, setBrandKit] = useState<BrandKit | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<
@@ -70,7 +72,7 @@ export default function MarketingPage() {
   const load = useCallback(async () => {
     try {
       setError("");
-      const [pb, cams, leadRows, conv, gov, spendRows, growthData, engRows] =
+      const [pb, cams, leadRows, conv, gov, spendRows, growthData, engRows, kit] =
         await Promise.all([
           apiJson<MarketingPlaybook>("/api/v1/marketing/playbook"),
           apiJson<Campaign[]>("/api/v1/marketing/campaigns"),
@@ -80,6 +82,7 @@ export default function MarketingPage() {
           apiJson<MarketingSpendRequest[]>("/api/v1/marketing/spend-requests"),
           apiJson<MarketingGrowth>("/api/v1/marketing/growth"),
           apiJson<MarketingEngagement[]>("/api/v1/marketing/engagements"),
+          apiJson<BrandKit>("/api/v1/settings/brand-kit"),
         ]);
       setPlaybook(pb);
       setCampaigns(cams);
@@ -89,6 +92,7 @@ export default function MarketingPage() {
       setSpends(spendRows);
       setGrowth(growthData);
       setEngagements(engRows);
+      setBrandKit(kit);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -508,6 +512,13 @@ export default function MarketingPage() {
   const current = stepIndex(step);
   const d = playbook?.diagnosis ?? {};
   const disc = playbook?.discovery ?? {};
+  const brandAssetsDefault =
+    d.brand_assets ||
+    [brandKit?.logo_url, brandKit?.notes, brandKit?.primary_color && `cores ${brandKit.primary_color}${brandKit.secondary_color ? ` / ${brandKit.secondary_color}` : ""}`]
+      .filter(Boolean)
+      .join("\n") ||
+    "";
+  const brandAvoidDefault = disc.brand_avoid || brandKit?.avoid || "";
 
   return (
     <>
@@ -599,6 +610,24 @@ export default function MarketingPage() {
                 </span>
               ))}
             </div>
+            <p style={{ marginBottom: 0, marginTop: 14, lineHeight: 1.5, opacity: 0.9 }}>
+              {brandKit?.configured ? (
+                <>
+                  Kit de marca ativo
+                  {brandKit.brand_name ? `: ${brandKit.brand_name}` : ""}
+                  {brandKit.voice_tone
+                    ? ` · tom: ${brandKit.voice_tone.slice(0, 80)}${brandKit.voice_tone.length > 80 ? "…" : ""}`
+                    : ""}
+                  .{" "}
+                  <Link href="/app/knowledge#brand">Editar na Base</Link>
+                </>
+              ) : (
+                <>
+                  Sem kit de marca ainda — posts e agentes ficam mais genéricos.{" "}
+                  <Link href="/app/knowledge#brand">Cadastrar identidade</Link>
+                </>
+              )}
+            </p>
           </article>
 
           {step === "diagnosis" && (
@@ -645,8 +674,12 @@ export default function MarketingPage() {
                   />
                 </label>
                 <label>
-                  Materiais de marca
-                  <textarea name="brand_assets" defaultValue={d.brand_assets} />
+                  Materiais de marca (complementa o kit)
+                  <textarea
+                    name="brand_assets"
+                    defaultValue={brandAssetsDefault}
+                    placeholder="O kit na Base já entra no plano; aqui só o que for específico deste diagnóstico"
+                  />
                 </label>
                 <label>
                   Resultados comerciais do marketing
@@ -708,10 +741,11 @@ export default function MarketingPage() {
                   />
                 </label>
                 <label>
-                  O que a marca NÃO deve parecer
+                  O que a marca deve evitar (complementa o kit)
                   <textarea
                     name="brand_avoid"
-                    defaultValue={disc.brand_avoid}
+                    defaultValue={brandAvoidDefault}
+                    placeholder="Já vem do kit se estiver preenchido"
                   />
                 </label>
                 <label>

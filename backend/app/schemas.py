@@ -199,3 +199,13 @@ class OnboardingUpdateIn(BaseModel):
 class EvolutionConnectIn(BaseModel):
     name:str=Field(min_length=2,max_length=120)
     instance_name:str|None=Field(default=None,max_length=120)
+
+class BrandKitIn(BaseModel):
+    brand_name:str=Field(default="",max_length=120)
+    tagline:str=Field(default="",max_length=240)
+    voice_tone:str=Field(default="",max_length=2000)
+    primary_color:str=Field(default="",max_length=7)
+    secondary_color:str=Field(default="",max_length=7)
+    logo_url:str=Field(default="",max_length=1000)
+    avoid:str=Field(default="",max_length=2000)
+    notes:str=Field(default="",max_length=4000)

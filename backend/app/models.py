@@ -50,6 +50,19 @@ class LlmCredential(Base):
 class OrganizationOnboarding(Base):
     __tablename__="organization_onboarding"
     organization_id:Mapped[uuid.UUID]=mapped_column(ForeignKey("organizations.id",ondelete="CASCADE"),primary_key=True);step:Mapped[str]=mapped_column(String(40),default="welcome");completed_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True));checklist:Mapped[dict]=mapped_column(JSON,default=dict)
+class OrganizationBrandKit(Base):
+    """Identidade verbal/visual da PME — usada por Marketing e agentes."""
+    __tablename__="organization_brand_kits"
+    organization_id:Mapped[uuid.UUID]=mapped_column(ForeignKey("organizations.id",ondelete="CASCADE"),primary_key=True)
+    brand_name:Mapped[str]=mapped_column(String(120),default="")
+    tagline:Mapped[str]=mapped_column(String(240),default="")
+    voice_tone:Mapped[str]=mapped_column(Text,default="")
+    primary_color:Mapped[str]=mapped_column(String(7),default="")
+    secondary_color:Mapped[str]=mapped_column(String(7),default="")
+    logo_url:Mapped[str]=mapped_column(String(1000),default="")
+    avoid:Mapped[str]=mapped_column(Text,default="")
+    notes:Mapped[str]=mapped_column(Text,default="")
+    updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now(),onupdate=func.now())
 class Contact(Base):
     __tablename__="contacts";__table_args__=(UniqueConstraint("organization_id","phone"),)
     id:Mapped[uuid.UUID]=mapped_column(primary_key=True,default=uuid.uuid4);organization_id:Mapped[uuid.UUID]=mapped_column(ForeignKey("organizations.id",ondelete="CASCADE"),index=True);name:Mapped[str]=mapped_column(String(160));phone:Mapped[str]=mapped_column(String(30));created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now())

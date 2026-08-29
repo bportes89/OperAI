@@ -3,19 +3,38 @@
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { apiJson } from "../../lib/api";
-import type { KnowledgeDocument, SearchHit } from "../../lib/types";
+import type { BrandKit, KnowledgeDocument, SearchHit } from "../../lib/types";
+
+const EMPTY_KIT: BrandKit = {
+  configured: false,
+  brand_name: "",
+  tagline: "",
+  voice_tone: "",
+  primary_color: "",
+  secondary_color: "",
+  logo_url: "",
+  avoid: "",
+  notes: "",
+};
 
 export default function KnowledgePage() {
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
+  const [kit, setKit] = useState<BrandKit>(EMPTY_KIT);
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [kitBusy, setKitBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
       setError("");
-      setDocuments(await apiJson<KnowledgeDocument[]>("/api/v1/knowledge/documents"));
+      const [docs, brand] = await Promise.all([
+        apiJson<KnowledgeDocument[]>("/api/v1/knowledge/documents"),
+        apiJson<BrandKit>("/api/v1/settings/brand-kit"),
+      ]);
+      setDocuments(docs);
+      setKit(brand);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -33,6 +52,30 @@ export default function KnowledgePage() {
       });
     } catch {
       /* optional — checklist real vem da detecção */
+    }
+  }
+
+  async function saveBrandKit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setKitBusy(true);
+    setError("");
+    setMessage("");
+    const data = Object.fromEntries(new FormData(event.currentTarget));
+    try {
+      const saved = await apiJson<BrandKit>("/api/v1/settings/brand-kit", {
+        method: "PUT",
+        body: JSON.stringify(data),
+      });
+      setKit(saved);
+      setMessage(
+        saved.configured
+          ? "Kit de marca salvo — Marketing e agentes já usam este tom."
+          : "Kit de marca limpo.",
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setKitBusy(false);
     }
   }
 
@@ -127,10 +170,134 @@ export default function KnowledgePage() {
 
       <article className="panel" style={{ marginBottom: 16 }}>
         <p style={{ margin: 0, lineHeight: 1.55, opacity: 0.9 }}>
-          Aqui fica o que a sua empresa sabe: FAQ, políticas e preços. Os
-          agentes usam isso para responder no tom do negócio — sem inventar o
-          que não está publicado. Você pode colar texto ou enviar PDF/Word.
+          Aqui ficam a identidade da marca e o que a empresa sabe (FAQ,
+          políticas, preços). Marketing e agentes usam o kit e os documentos
+          para falar no tom do negócio — sem inventar o que não está
+          publicado.
         </p>
+      </article>
+
+      <article className="panel" id="brand" style={{ marginBottom: 18 }}>
+        <div className="panel-title">
+          <div>
+            <span>IDENTIDADE</span>
+            <h2>Kit de marca</h2>
+          </div>
+          {kit.configured && kit.primary_color ? (
+            <span
+              title={kit.primary_color}
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: 6,
+                background: kit.primary_color,
+                border: "1px solid rgba(0,0,0,.12)",
+                flexShrink: 0,
+              }}
+            />
+          ) : null}
+        </div>
+        <p style={{ marginTop: 0, opacity: 0.85, lineHeight: 1.5 }}>
+          Nome, tom, cores e o que evitar. Vale para posts, WhatsApp e
+          cobrança — preencha uma vez.
+        </p>
+        <form
+          key={`${kit.updated_at ?? "new"}-${kit.brand_name}`}
+          onSubmit={saveBrandKit}
+          style={{ display: "grid", gap: 12 }}
+        >
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+            }}
+          >
+            <label>
+              Nome da marca
+              <input
+                name="brand_name"
+                defaultValue={kit.brand_name}
+                placeholder="Ex.: Café do Bairro"
+                maxLength={120}
+              />
+            </label>
+            <label>
+              Slogan
+              <input
+                name="tagline"
+                defaultValue={kit.tagline}
+                placeholder="Ex.: Café fresco, conversa boa"
+                maxLength={240}
+              />
+            </label>
+          </div>
+          <label>
+            Tom de voz
+            <textarea
+              name="voice_tone"
+              defaultValue={kit.voice_tone}
+              placeholder="Ex.: próximo e descontraído, sem gírias exageradas; trate o cliente por você"
+              maxLength={2000}
+            />
+          </label>
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+            }}
+          >
+            <label>
+              Cor primária
+              <input
+                name="primary_color"
+                defaultValue={kit.primary_color}
+                placeholder="#1A5F4A"
+                maxLength={7}
+              />
+            </label>
+            <label>
+              Cor secundária
+              <input
+                name="secondary_color"
+                defaultValue={kit.secondary_color}
+                placeholder="#F5E6C8"
+                maxLength={7}
+              />
+            </label>
+            <label>
+              URL do logo
+              <input
+                name="logo_url"
+                defaultValue={kit.logo_url}
+                placeholder="https://…"
+                maxLength={1000}
+              />
+            </label>
+          </div>
+          <label>
+            Evitar / nunca dizer
+            <textarea
+              name="avoid"
+              defaultValue={kit.avoid}
+              placeholder="Ex.: não prometer prazo sem confirmar; evitar ‘barato’ e ‘garantia vitalícia’"
+              maxLength={2000}
+            />
+          </label>
+          <label>
+            Notas extras (materiais, tipografia, referências)
+            <textarea
+              name="notes"
+              defaultValue={kit.notes}
+              placeholder="Ex.: fotos com luz natural; tipografia arredondada; Instagram @cafe…"
+              maxLength={4000}
+            />
+          </label>
+          <button className="primary" disabled={kitBusy}>
+            {kitBusy ? "Salvando…" : "Salvar kit de marca"}
+          </button>
+        </form>
       </article>
 
       <div className="content-grid">
