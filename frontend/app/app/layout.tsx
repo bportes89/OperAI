@@ -13,16 +13,16 @@ import type { OnboardingState } from "../lib/types";
 
 const NAV = [
   { href: "/app", label: "Visão geral", exact: true },
-  { href: "/app/onboarding", label: "Onboarding" },
+  { href: "/app/onboarding", label: "Começar" },
   { href: "/app/agents", label: "Agentes" },
-  { href: "/app/knowledge", label: "Conhecimento" },
+  { href: "/app/knowledge", label: "Base da empresa" },
   { href: "/app/inbox", label: "WhatsApp" },
   { href: "/app/crm", label: "CRM" },
   { href: "/app/finance", label: "Cobrança" },
   { href: "/app/marketing", label: "Marketing" },
   { href: "/app/team", label: "Equipe" },
-  { href: "/app/billing", label: "Conta / Billing" },
-  { href: "/app/settings/llm", label: "Chave LLM" },
+  { href: "/app/billing", label: "Planos" },
+  { href: "/app/settings/llm", label: "Inteligência (IA)" },
 ];
 
 function isSelected(pathname: string, href: string, exact?: boolean) {
@@ -145,8 +145,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           {showOnboardingBanner && (
             <div className="banner banner-warn">
               <span>
-                Finalize o onboarding: chave LLM, FAQ e WhatsApp para colocar a
-                operação no ar.
+                Complete o setup: inteligência (IA), base da empresa e WhatsApp
+                para colocar a operação no ar.
               </span>
               <Link href="/app/onboarding">Continuar setup</Link>
             </div>

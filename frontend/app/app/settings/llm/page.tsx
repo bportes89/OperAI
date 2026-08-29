@@ -1,20 +1,66 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { apiJson } from "../../../lib/api";
 import type { LlmSettings } from "../../../lib/types";
+
+const PROVIDERS = [
+  {
+    id: "groq",
+    name: "Groq",
+    blurb: "Bom para começar — rápido e costuma ter créditos gratuitos.",
+    keyUrl: "https://console.groq.com/keys",
+    models: [
+      { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B (recomendado)" },
+      { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B (mais barato)" },
+    ],
+  },
+  {
+    id: "openai",
+    name: "OpenAI",
+    blurb: "O mais conhecido (ChatGPT). Exige conta com pagamento cadastrado.",
+    keyUrl: "https://platform.openai.com/api-keys",
+    models: [
+      { id: "gpt-4o-mini", label: "GPT-4o mini (recomendado)" },
+      { id: "gpt-4o", label: "GPT-4o (mais capaz)" },
+    ],
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    blurb: "Uma chave para vários modelos. Útil se você quiser trocar depois.",
+    keyUrl: "https://openrouter.ai/keys",
+    models: [
+      { id: "openai/gpt-4o-mini", label: "GPT-4o mini via OpenRouter" },
+      { id: "google/gemini-2.0-flash-001", label: "Gemini Flash" },
+    ],
+  },
+] as const;
 
 export default function LlmSettingsPage() {
   const [settings, setSettings] = useState<LlmSettings | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState(1);
+  const [provider, setProvider] = useState("groq");
+  const [model, setModel] = useState("llama-3.3-70b-versatile");
+
+  const selected = useMemo(
+    () => PROVIDERS.find((p) => p.id === provider) ?? PROVIDERS[0],
+    [provider],
+  );
 
   const load = useCallback(async () => {
     try {
       setError("");
       const data = await apiJson<LlmSettings>("/api/v1/settings/llm");
       setSettings(data);
+      if (data.configured && data.provider) {
+        setProvider(data.provider);
+        if (data.model_name) setModel(data.model_name);
+      }
     } catch (e) {
       setError((e as Error).message);
     }
@@ -23,6 +69,13 @@ export default function LlmSettingsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const first = selected.models[0]?.id;
+    if (first && !selected.models.some((m) => m.id === model)) {
+      setModel(first);
+    }
+  }, [selected, model]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -41,19 +94,11 @@ export default function LlmSettingsPage() {
         }),
       });
       setSettings(updated);
-      setMessage("Chave LLM salva. Os agentes passam a usar BYOK.");
+      setMessage(
+        "Pronto! A inteligência da sua empresa está conectada. Os agentes já podem responder de verdade.",
+      );
+      setStep(4);
       form.reset();
-      try {
-        await apiJson("/api/v1/settings/onboarding", {
-          method: "PATCH",
-          body: JSON.stringify({
-            checklist: { llm: true },
-            step: "llm",
-          }),
-        });
-      } catch {
-        /* optional while backend deploys */
-      }
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -66,19 +111,48 @@ export default function LlmSettingsPage() {
     <>
       <header>
         <div>
-          <span>BYOK</span>
-          <h1>Chave LLM</h1>
+          <span>INTELIGÊNCIA</span>
+          <h1>Conectar a IA da empresa</h1>
         </div>
+        <Link className="secondary" href="/app/onboarding">
+          Voltar ao setup
+        </Link>
       </header>
       {error && <p className="error">{error}</p>}
       {message && <p className="success">{message}</p>}
+
+      <article className="panel" style={{ marginBottom: 16 }}>
+        <div className="panel-title">
+          <div>
+            <span>POR QUE ISSO?</span>
+            <h2>Em linguagem simples</h2>
+          </div>
+        </div>
+        <p style={{ marginTop: 0, lineHeight: 1.55 }}>
+          A OperAI é a plataforma (agentes, WhatsApp, CRM). O custo das
+          respostas de IA fica na <strong>sua</strong> conta do provedor —
+          assim você controla o gasto. É só criar uma chave no site do
+          provedor e colar aqui. Não precisa ser técnico: siga os 3 passos.
+        </p>
+        <div className="proposal-actions" style={{ flexWrap: "wrap" }}>
+          {[1, 2, 3].map((n) => (
+            <span
+              key={n}
+              className={`finance-status ${step >= n ? "paid" : "pending"}`}
+            >
+              {n}.{" "}
+              {n === 1 ? "Escolher provedor" : n === 2 ? "Pegar a chave" : "Colar e testar"}
+            </span>
+          ))}
+        </div>
+      </article>
 
       <div className="content-grid">
         <article className="panel">
           <div className="panel-title">
             <div>
               <span>STATUS</span>
-              <h2>Provedor atual</h2>
+              <h2>Situação atual</h2>
             </div>
           </div>
           {settings?.configured ? (
@@ -91,13 +165,17 @@ export default function LlmSettingsPage() {
                 <span>Modelo</span>
                 <strong>{settings.model_name}</strong>
               </div>
+              <div>
+                <span>Chave</span>
+                <strong>{settings.api_key_masked ?? "••••"}</strong>
+              </div>
             </div>
           ) : (
             <div className="empty">
-              <strong>Nenhuma chave configurada</strong>
+              <strong>Ainda sem conexão</strong>
               <p>
-                Sem BYOK, os agentes usam resposta local limitada. Cole sua
-                chave para respostas reais.
+                Enquanto isso, os agentes usam só o que está na base da empresa
+                (respostas limitadas). Complete o passo a passo ao lado.
               </p>
             </div>
           )}
@@ -106,45 +184,92 @@ export default function LlmSettingsPage() {
         <article className="panel">
           <div className="panel-title">
             <div>
-              <span>CONFIGURAR</span>
-              <h2>Salvar credencial</h2>
+              <span>ASSISTENTE</span>
+              <h2>Passo a passo</h2>
             </div>
           </div>
           <form onSubmit={onSubmit}>
             <label>
-              Provedor
+              1. Qual provedor você quer usar?
               <select
                 name="provider"
-                defaultValue={settings?.provider ?? "openai"}
+                value={provider}
+                onChange={(e) => {
+                  setProvider(e.target.value);
+                  setStep(1);
+                }}
                 required
               >
-                <option value="openai">OpenAI</option>
-                <option value="groq">Groq</option>
-                <option value="openrouter">OpenRouter</option>
+                {PROVIDERS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {p.id === "groq" ? " — recomendado para começar" : ""}
+                  </option>
+                ))}
               </select>
             </label>
+            <p style={{ opacity: 0.85, marginTop: -4 }}>{selected.blurb}</p>
+
             <label>
-              Modelo
-              <input
+              2. Qual modelo?
+              <select
                 name="model"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
                 required
-                defaultValue={settings?.model_name ?? "gpt-4o-mini"}
-                placeholder="gpt-4o-mini"
-              />
+              >
+                {selected.models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
             </label>
+            <p style={{ opacity: 0.85, marginTop: -4 }}>
+              Deixe o recomendado se não tiver preferência.
+            </p>
+
+            <div
+              style={{
+                border: "1px solid #3a3a40",
+                padding: 12,
+                borderRadius: 8,
+                marginBottom: 8,
+              }}
+            >
+              <strong>3. Pegue sua chave</strong>
+              <p style={{ margin: "8px 0", opacity: 0.85 }}>
+                Abra o site do provedor, entre na conta e crie uma API key.
+                Depois volte e cole abaixo.
+              </p>
+              <a
+                className="secondary"
+                href={selected.keyUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setStep(2)}
+              >
+                Abrir página de chaves ({selected.name})
+              </a>
+            </div>
+
             <label>
-              API key
+              Cole a chave aqui
               <input
                 name="api_key"
                 type="password"
                 required
                 minLength={8}
-                placeholder="sk-..."
+                placeholder="Cole a chave gerada no site do provedor"
                 autoComplete="off"
+                onFocus={() => setStep(3)}
               />
             </label>
+
             <button className="primary" disabled={busy}>
-              {busy ? "Salvando..." : "Salvar chave"}
+              {busy
+                ? "Testando conexão…"
+                : "Testar e salvar (validamos antes de gravar)"}
             </button>
           </form>
         </article>

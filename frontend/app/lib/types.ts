@@ -264,6 +264,8 @@ export type LlmSettings = {
   model_name: string | null;
   configured: boolean;
   has_api_key?: boolean;
+  api_key_masked?: string | null;
+  updated_at?: string | null;
 };
 
 export type BillingPlan = {

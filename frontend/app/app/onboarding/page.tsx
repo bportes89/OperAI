@@ -11,56 +11,56 @@ type Step = {
   description: string;
   href: string;
   cta: string;
+  tip: string;
 };
 
 const STEPS: Step[] = [
   {
     key: "account",
     title: "1. Conta e trial",
-    description: "Sua empresa já está criada com trial ativo.",
+    description: "Sua empresa já está criada. O trial libera o uso inicial.",
     href: "/app/billing",
-    cta: "Ver assinatura",
+    cta: "Ver planos",
+    tip: "Nada técnico aqui — só acompanhar a assinatura.",
   },
   {
     key: "llm",
-    title: "2. Colar chave LLM (BYOK)",
-    description: "Conecte OpenAI, Groq ou OpenRouter para respostas reais.",
+    title: "2. Conectar a inteligência (IA)",
+    description:
+      "Cole a chave do provedor de IA (OpenAI, Groq ou OpenRouter). Sem isso, as respostas ficam limitadas.",
     href: "/app/settings/llm",
-    cta: "Configurar LLM",
+    cta: "Guia passo a passo",
+    tip: "Não inventamos jargão: o assistente explica onde clicar para pegar a chave.",
   },
   {
     key: "faq",
-    title: "3. Subir FAQ",
-    description: "Alimente a base com políticas, preços e respostas comuns.",
+    title: "3. Base da empresa",
+    description:
+      "Publique FAQ, políticas e preços. É o que os agentes usam para falar como a sua empresa.",
     href: "/app/knowledge",
-    cta: "Enviar FAQ",
+    cta: "Adicionar conteúdo",
+    tip: "Comece colando um FAQ curto — depois evoluímos para PDF/Word.",
   },
   {
     key: "whatsapp",
-    title: "4. Conectar WhatsApp",
-    description: "Vincule um canal Evolution ou webhook para atender clientes.",
+    title: "4. Canal de atendimento",
+    description:
+      "Conecte o WhatsApp para conversas entrarem na OperAI. Hoje usa Evolution ou webhook.",
     href: "/app/inbox",
-    cta: "Conectar WhatsApp",
+    cta: "Abrir WhatsApp / Inbox",
+    tip: "A verificação da conta nas plataformas sempre é feita por você (dono).",
   },
 ];
 
 export default function OnboardingPage() {
   const [state, setState] = useState<OnboardingState | null>(null);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
       setError("");
       const data = await apiJson<OnboardingState>("/api/v1/settings/onboarding");
-      const checklist = {
-        account: true,
-        llm: false,
-        faq: false,
-        whatsapp: false,
-        ...(data.checklist ?? {}),
-      };
-      setState({ ...data, checklist });
+      setState(data);
     } catch (e) {
       setError((e as Error).message);
       setState({
@@ -75,39 +75,6 @@ export default function OnboardingPage() {
     void load();
   }, [load]);
 
-  async function markDone(key: string) {
-    setBusy(true);
-    setError("");
-    try {
-      const nextChecklist = {
-        ...(state?.checklist ?? {}),
-        [key]: true,
-        account: true,
-      };
-      const allDone =
-        nextChecklist.account &&
-        nextChecklist.llm &&
-        nextChecklist.faq &&
-        nextChecklist.whatsapp;
-      const updated = await apiJson<OnboardingState>(
-        "/api/v1/settings/onboarding",
-        {
-          method: "PATCH",
-          body: JSON.stringify({
-            step: allDone ? "done" : key,
-            checklist: nextChecklist,
-            completed: allDone,
-          }),
-        },
-      );
-      setState(updated);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   const checklist = state?.checklist ?? {};
   const doneCount = STEPS.filter((s) => checklist[s.key]).length;
 
@@ -116,25 +83,35 @@ export default function OnboardingPage() {
       <header>
         <div>
           <span>SETUP</span>
-          <h1>Onboarding</h1>
+          <h1>Começar a operar</h1>
         </div>
         <div className="online">
-          {doneCount}/{STEPS.length} passos
+          {doneCount}/{STEPS.length} concluídos
         </div>
       </header>
       {error && <p className="error">{error}</p>}
       {state?.completed_at && (
-        <p className="success">Onboarding concluído. Boa operação!</p>
+        <p className="success">
+          Setup completo — inteligência, base e canal detectados de verdade.
+        </p>
       )}
+
+      <article className="panel" style={{ marginBottom: 16 }}>
+        <p style={{ margin: 0, lineHeight: 1.55, opacity: 0.9 }}>
+          Os passos abaixo são <strong>validados automaticamente</strong>: não
+          adianta só marcar como feito. Quando você conectar a IA, publicar a
+          base ou o WhatsApp, o checklist atualiza sozinho.
+        </p>
+      </article>
 
       <article className="panel">
         <div className="panel-title">
           <div>
             <span>CHECKLIST</span>
-            <h2>Coloque a operação no ar</h2>
+            <h2>Do cadastro à primeira operação</h2>
           </div>
           <button type="button" onClick={() => void load()}>
-            Atualizar
+            Atualizar status
           </button>
         </div>
         <div className="checklist">
@@ -148,24 +125,28 @@ export default function OnboardingPage() {
                 <div className="check-dot">{done ? "✓" : ""}</div>
                 <div>
                   <strong>{step.title}</strong>
-                  <small style={{ display: "block", color: "#8a9692" }}>
+                  <small style={{ display: "block", color: "#a0a0a8" }}>
                     {step.description}
                   </small>
+                  <small style={{ display: "block", color: "#7a7a84", marginTop: 4 }}>
+                    {step.tip}
+                  </small>
+                  {done && (
+                    <small
+                      style={{
+                        display: "block",
+                        color: "#8ee0b5",
+                        marginTop: 6,
+                      }}
+                    >
+                      Detectado automaticamente
+                    </small>
+                  )}
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Link className="secondary" href={step.href}>
-                    {step.cta}
+                  <Link className={done ? "secondary" : "primary"} href={step.href}>
+                    {done ? "Revisar" : step.cta}
                   </Link>
-                  {!done && step.key !== "account" && (
-                    <button
-                      type="button"
-                      className="primary"
-                      disabled={busy}
-                      onClick={() => void markDone(String(step.key))}
-                    >
-                      Marcar feito
-                    </button>
-                  )}
                 </div>
               </div>
             );

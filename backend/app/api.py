@@ -258,9 +258,37 @@ async def get_llm_settings(p:Annotated[Principal,Depends(current_principal)],db:
         masked="••••"
     return {"configured":True,"provider":cred.provider,"model_name":cred.model_name,"api_key_masked":masked,"updated_at":cred.updated_at}
 
+@router.post("/settings/llm/test")
+async def test_llm_settings(data:LlmSettingsIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    try:
+        answer=await llm.chat(
+            data.provider,
+            data.api_key.strip(),
+            data.model_name,
+            "Você é um assistente de teste da OperAI. Responda em uma frase curta em português.",
+            "Confirme que a conexão está funcionando com a palavra OK.",
+            temperature=0,
+        )
+        return {"ok":True,"provider":data.provider,"model_name":data.model_name,"sample":answer[:240]}
+    except Exception as exc:
+        raise HTTPException(422,f"Não foi possível validar a chave: {exc}") from exc
+
 @router.put("/settings/llm")
 async def put_llm_settings(data:LlmSettingsIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN))],db:Db):
     await require_billing_access(p.organization_id,db)
+    # Valida a chave antes de gravar — evita PME “salvar” credencial inválida
+    try:
+        await llm.chat(
+            data.provider,
+            data.api_key.strip(),
+            data.model_name,
+            "Você é um assistente de teste da OperAI. Responda só OK.",
+            "Responda OK.",
+            temperature=0,
+        )
+    except Exception as exc:
+        raise HTTPException(422,f"Chave ou modelo inválidos. Confira o provedor e tente de novo. ({exc})") from exc
     cred=await db.scalar(select(LlmCredential).where(LlmCredential.organization_id==p.organization_id))
     encrypted=encrypt_secret(data.api_key)
     if cred:
@@ -268,11 +296,22 @@ async def put_llm_settings(data:LlmSettingsIn,p:Annotated[Principal,Depends(requ
     else:
         cred=LlmCredential(organization_id=p.organization_id,provider=data.provider,model_name=data.model_name,api_key_encrypted=encrypted)
         db.add(cred)
+    onboarding=await db.scalar(select(OrganizationOnboarding).where(OrganizationOnboarding.organization_id==p.organization_id))
+    if onboarding:
+        checklist={**(onboarding.checklist or {}), "llm":True, "account":True}
+        onboarding.checklist=checklist
+        onboarding.step="llm"
     db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="settings.llm_updated",resource="llm_credential",detail=data.provider))
     await db.commit()
     raw=data.api_key
     masked=(raw[:4]+"…" +raw[-4:]) if len(raw)>=8 else "••••"
     return {"configured":True,"provider":cred.provider,"model_name":cred.model_name,"api_key_masked":masked}
+
+async def _onboarding_detected(org_id:uuid.UUID,db:AsyncSession)->dict:
+    llm_ok=await db.scalar(select(LlmCredential.id).where(LlmCredential.organization_id==org_id).limit(1))
+    faq_ok=await db.scalar(select(KnowledgeDocument.id).where(KnowledgeDocument.organization_id==org_id).limit(1))
+    wa_ok=await db.scalar(select(Channel.id).where(and_(Channel.organization_id==org_id,Channel.active.is_(True))).limit(1))
+    return {"account":True,"llm":bool(llm_ok),"faq":bool(faq_ok),"whatsapp":bool(wa_ok)}
 
 @router.get("/settings/onboarding")
 async def get_onboarding(p:Annotated[Principal,Depends(current_principal)],db:Db):
@@ -280,7 +319,21 @@ async def get_onboarding(p:Annotated[Principal,Depends(current_principal)],db:Db
     if not row:
         row=OrganizationOnboarding(organization_id=p.organization_id,step="welcome",checklist={})
         db.add(row);await db.commit();await db.refresh(row)
-    return {"step":row.step,"completed_at":row.completed_at,"checklist":row.checklist or {}}
+    detected=await _onboarding_detected(p.organization_id,db)
+    # Validação real prevalece: não dá para “marcar feito” sem ter configurado
+    checklist={
+        "account":True,
+        "llm":detected["llm"],
+        "faq":detected["faq"],
+        "whatsapp":detected["whatsapp"],
+    }
+    if all(checklist.values()) and not row.completed_at:
+        row.completed_at=datetime.now(UTC);row.step="done";row.checklist=checklist
+        await db.commit();await db.refresh(row)
+    elif checklist!= (row.checklist or {}):
+        row.checklist=checklist
+        await db.commit();await db.refresh(row)
+    return {"step":row.step,"completed_at":row.completed_at,"checklist":checklist,"detected":detected}
 
 @router.patch("/settings/onboarding")
 async def patch_onboarding(data:OnboardingUpdateIn,p:Annotated[Principal,Depends(current_principal)],db:Db):
@@ -288,10 +341,21 @@ async def patch_onboarding(data:OnboardingUpdateIn,p:Annotated[Principal,Depends
     if not row:
         row=OrganizationOnboarding(organization_id=p.organization_id,step="welcome",checklist={})
         db.add(row);await db.flush()
+    detected=await _onboarding_detected(p.organization_id,db)
+    checklist={
+        "account":True,
+        "llm":detected["llm"],
+        "faq":detected["faq"],
+        "whatsapp":detected["whatsapp"],
+    }
+    row.checklist=checklist
     if data.step is not None:row.step=data.step
-    if data.checklist is not None:row.checklist=data.checklist
-    if data.completed is True:row.completed_at=datetime.now(UTC);row.step=data.step or "done"
-    await db.commit();return {"step":row.step,"completed_at":row.completed_at,"checklist":row.checklist or {}}
+    if all(checklist.values()):
+        row.completed_at=datetime.now(UTC);row.step="done"
+    elif data.completed is True and not all(checklist.values()):
+        raise HTTPException(409,"Conclua inteligência, base da empresa e WhatsApp de verdade antes de finalizar.")
+    await db.commit()
+    return {"step":row.step,"completed_at":row.completed_at,"checklist":checklist,"detected":detected}
 
 @router.get("/opportunities")
 async def opportunities(p:Annotated[Principal,Depends(current_principal)],db:Db):

@@ -72,18 +72,26 @@ export default function KnowledgePage() {
     <>
       <header>
         <div>
-          <span>RAG</span>
+          <span>BASE DA EMPRESA</span>
           <h1>Conhecimento</h1>
         </div>
       </header>
       {error && <p className="error">{error}</p>}
 
+      <article className="panel" style={{ marginBottom: 16 }}>
+        <p style={{ margin: 0, lineHeight: 1.55, opacity: 0.9 }}>
+          Aqui fica o que a sua empresa sabe: FAQ, políticas e preços. Os
+          agentes usam isso para responder no tom do negócio — sem inventar o
+          que não está publicado.
+        </p>
+      </article>
+
       <div className="content-grid">
         <article className="panel">
           <div className="panel-title">
             <div>
-              <span>DOCUMENTOS</span>
-              <h2>Base processada</h2>
+              <span>PUBLICADOS</span>
+              <h2>Conteúdos na base</h2>
             </div>
           </div>
           <form className="search-form" onSubmit={searchKnowledge}>
@@ -91,7 +99,7 @@ export default function KnowledgePage() {
               name="q"
               required
               minLength={2}
-              placeholder="Buscar na base..."
+              placeholder="Buscar no conhecimento da empresa…"
             />
             <button className="primary" type="submit">
               Buscar
@@ -108,10 +116,9 @@ export default function KnowledgePage() {
             </div>
           ) : documents.length === 0 ? (
             <div className="empty">
-              <strong>Base vazia</strong>
+              <strong>Base ainda vazia</strong>
               <p>
-                Suba um FAQ ou manual para os agentes responderem com contexto
-                da empresa.
+                Cole um FAQ curto para começar. Em breve: upload de PDF e Word.
               </p>
               <Link className="primary" href="#ingest">
                 Adicionar FAQ
@@ -124,7 +131,7 @@ export default function KnowledgePage() {
                   <strong>{doc.title}</strong>
                   <small>{doc.source_type}</small>
                 </div>
-                <span>{doc.chunk_count} chunks</span>
+                <span>{doc.chunk_count} trechos</span>
               </div>
             ))
           )}
@@ -133,14 +140,14 @@ export default function KnowledgePage() {
         <article className="panel" id="ingest">
           <div className="panel-title">
             <div>
-              <span>INGESTÃO</span>
-              <h2>Adicionar documento</h2>
+              <span>NOVO</span>
+              <h2>Publicar conteúdo</h2>
             </div>
           </div>
           <form onSubmit={createDocument}>
             <label>
               Título
-              <input name="title" required minLength={2} />
+              <input name="title" required minLength={2} placeholder="Ex.: FAQ comercial" />
             </label>
             <label>
               Tipo
@@ -153,10 +160,15 @@ export default function KnowledgePage() {
             </label>
             <label>
               Conteúdo
-              <textarea name="content" required minLength={20} />
+              <textarea
+                name="content"
+                required
+                minLength={20}
+                placeholder="Cole aqui perguntas e respostas, políticas ou scripts…"
+              />
             </label>
             <button className="primary" disabled={busy}>
-              Processar documento
+              Publicar na base
             </button>
           </form>
         </article>
