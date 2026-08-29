@@ -1,12 +1,16 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { apiJson } from "../../lib/api";
 import {
   CAMPAIGN_STATUS_LABELS,
   CAMPAIGN_TRANSITIONS,
   type Campaign,
+  type MarketingConversion,
+  type MarketingLead,
   type MarketingPlaybook,
+  type MarketingPost,
 } from "../../lib/types";
 
 const WIZARD_STEPS = [
@@ -24,22 +28,28 @@ function stepIndex(step: string) {
 export default function MarketingPage() {
   const [playbook, setPlaybook] = useState<MarketingPlaybook | null>(null);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [leads, setLeads] = useState<MarketingLead[]>([]);
+  const [conversion, setConversion] = useState<MarketingConversion | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState<"wizard" | "campaigns">("wizard");
+  const [view, setView] = useState<"wizard" | "campaigns" | "conversion">(
+    "wizard",
+  );
+  const [interestFor, setInterestFor] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       setError("");
-      const [pb, cams] = await Promise.all([
+      const [pb, cams, leadRows, conv] = await Promise.all([
         apiJson<MarketingPlaybook>("/api/v1/marketing/playbook"),
         apiJson<Campaign[]>("/api/v1/marketing/campaigns"),
+        apiJson<MarketingLead[]>("/api/v1/marketing/leads"),
+        apiJson<MarketingConversion>("/api/v1/marketing/conversion"),
       ]);
       setPlaybook(pb);
       setCampaigns(cams);
-      if (pb.step === "active" && (pb.posts?.length ?? 0) > 0) {
-        setView("wizard");
-      }
+      setLeads(leadRows);
+      setConversion(conv);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -155,6 +165,93 @@ export default function MarketingPage() {
     }
   }
 
+  async function registerInterest(
+    event: FormEvent<HTMLFormElement>,
+    source: { title: string; channel: string; campaignId?: string },
+  ) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    const form = event.currentTarget;
+    const data = Object.fromEntries(new FormData(form));
+    try {
+      await apiJson("/api/v1/marketing/leads", {
+        method: "POST",
+        body: JSON.stringify({
+          contact_name: data.contact_name,
+          phone: data.phone || null,
+          email: data.email || null,
+          note: data.note || null,
+          company: data.company || null,
+          source_title: source.title,
+          source_channel: source.channel,
+          campaign_id: source.campaignId || null,
+          value_cents: Math.round(Number(data.value || 0) * 100),
+        }),
+      });
+      form.reset();
+      setInterestFor(null);
+      await load();
+      setView("conversion");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function interestForm(
+    key: string,
+    source: { title: string; channel: string; campaignId?: string },
+  ) {
+    if (interestFor !== key) {
+      return (
+        <button type="button" onClick={() => setInterestFor(key)}>
+          Registrar interesse → CRM
+        </button>
+      );
+    }
+    return (
+      <form
+        onSubmit={(e) => void registerInterest(e, source)}
+        style={{ display: "grid", gap: 8, marginTop: 8 }}
+      >
+        <label>
+          Nome do interessado
+          <input name="contact_name" required minLength={2} />
+        </label>
+        <label>
+          Telefone (WhatsApp)
+          <input name="phone" placeholder="11999999999" />
+        </label>
+        <label>
+          E-mail
+          <input name="email" type="email" />
+        </label>
+        <label>
+          Empresa
+          <input name="company" />
+        </label>
+        <label>
+          Valor estimado (R$)
+          <input name="value" type="number" min={0} step="0.01" defaultValue={0} />
+        </label>
+        <label>
+          Nota / contexto do interesse
+          <textarea name="note" placeholder="Comentou no post, pediu orçamento…" />
+        </label>
+        <div className="proposal-actions">
+          <button className="primary" disabled={busy} type="submit">
+            Criar lead e passar ao comercial
+          </button>
+          <button type="button" onClick={() => setInterestFor(null)}>
+            Cancelar
+          </button>
+        </div>
+      </form>
+    );
+  }
+
   const step = playbook?.step ?? "diagnosis";
   const current = stepIndex(step);
   const d = playbook?.diagnosis ?? {};
@@ -182,9 +279,36 @@ export default function MarketingPage() {
           >
             Campanhas
           </button>
+          <button
+            type="button"
+            className={view === "conversion" ? "primary" : undefined}
+            onClick={() => setView("conversion")}
+          >
+            Conversão
+          </button>
         </div>
       </header>
       {error && <p className="error">{error}</p>}
+
+      {conversion && (
+        <div className="metrics">
+          <article>
+            <span>Interesses (7d)</span>
+            <strong>{conversion.interests}</strong>
+            <small>conteúdo → pessoa</small>
+          </article>
+          <article>
+            <span>Leads com contato</span>
+            <strong>{conversion.leads_with_contact}</strong>
+            <small>telefone ou e-mail</small>
+          </article>
+          <article>
+            <span>Oportunidades CRM</span>
+            <strong>{conversion.opportunities}</strong>
+            <small>handoff comercial</small>
+          </article>
+        </div>
+      )}
 
       {view === "wizard" && (
         <>
@@ -196,8 +320,8 @@ export default function MarketingPage() {
               </div>
             </div>
             <p style={{ marginTop: 0, opacity: 0.8 }}>
-              Gestor + Redação + Mídias sociais. Começa entendendo o negócio;
-              só depois gera plano e peças com CTA.
+              Gestor + Redação + Mídias. Depois do plano, registre interesse e o
+              lead vai para o CRM.
             </p>
             <div className="proposal-actions" style={{ flexWrap: "wrap" }}>
               {WIZARD_STEPS.map((s, i) => (
@@ -227,7 +351,6 @@ export default function MarketingPage() {
                     required
                     minLength={2}
                     defaultValue={d.channels_active}
-                    placeholder="Instagram, WhatsApp Status, site…"
                   />
                 </label>
                 <label>
@@ -237,7 +360,6 @@ export default function MarketingPage() {
                     required
                     minLength={2}
                     defaultValue={d.content_types}
-                    placeholder="Posts institucionais, bastidores, ofertas…"
                   />
                 </label>
                 <label>
@@ -247,31 +369,24 @@ export default function MarketingPage() {
                     required
                     minLength={2}
                     defaultValue={d.frequency}
-                    placeholder="Ex.: 3x por semana"
                   />
                 </label>
                 <label>
-                  Dados de engajamento (mesmo que superficiais)
+                  Dados de engajamento
                   <textarea
                     name="engagement_notes"
                     defaultValue={d.engagement_notes}
-                    placeholder="Curtidas, alcance, comentários, horários…"
                   />
                 </label>
                 <label>
-                  Materiais de marca já existentes
-                  <textarea
-                    name="brand_assets"
-                    defaultValue={d.brand_assets}
-                    placeholder="Logo, textos institucionais, identidade…"
-                  />
+                  Materiais de marca
+                  <textarea name="brand_assets" defaultValue={d.brand_assets} />
                 </label>
                 <label>
-                  Resultados comerciais já vindos do marketing
+                  Resultados comerciais do marketing
                   <textarea
                     name="commercial_results"
                     defaultValue={d.commercial_results}
-                    placeholder="Leads, vendas, ou 'ainda não medimos'"
                   />
                 </label>
                 <button className="primary" disabled={busy}>
@@ -300,7 +415,7 @@ export default function MarketingPage() {
                   />
                 </label>
                 <label>
-                  O que diferencia esta empresa
+                  Diferencial
                   <textarea
                     name="differentiators"
                     required
@@ -309,7 +424,7 @@ export default function MarketingPage() {
                   />
                 </label>
                 <label>
-                  Cliente ideal e onde ele está
+                  Cliente ideal
                   <textarea
                     name="ideal_customer"
                     required
@@ -318,7 +433,7 @@ export default function MarketingPage() {
                   />
                 </label>
                 <label>
-                  Missão, visão e valores (pelo que quer ser conhecida)
+                  Missão, visão e valores
                   <textarea
                     name="mission_values"
                     required
@@ -334,31 +449,25 @@ export default function MarketingPage() {
                   />
                 </label>
                 <label>
-                  Capacidade real de atendimento de leads
+                  Capacidade de leads
                   <input
                     name="lead_capacity"
                     required
                     minLength={1}
                     defaultValue={disc.lead_capacity}
-                    placeholder="Ex.: 10 conversas/semana"
                   />
                 </label>
                 <label>
                   Sazonalidade
-                  <input
-                    name="seasonality"
-                    defaultValue={disc.seasonality}
-                    placeholder="Ex.: pico no 4º trimestre"
-                  />
+                  <input name="seasonality" defaultValue={disc.seasonality} />
                 </label>
                 <label>
-                  Orçamento mensal de marketing
+                  Orçamento mensal
                   <input
                     name="monthly_budget"
                     required
                     minLength={1}
                     defaultValue={disc.monthly_budget}
-                    placeholder="Ex.: R$ 0 (só orgânico) / R$ 500"
                   />
                 </label>
                 <button className="primary" disabled={busy}>
@@ -379,10 +488,7 @@ export default function MarketingPage() {
                 </div>
                 {!playbook?.action_plan ? (
                   <>
-                    <p>
-                      Diagnóstico e descoberta prontos. O Agente Gestor vai
-                      cruzar orçamento, capacidade e canais para propor o plano.
-                    </p>
+                    <p>Diagnóstico e descoberta prontos. Gere o plano Essencial.</p>
                     <button
                       className="primary"
                       type="button"
@@ -431,7 +537,7 @@ export default function MarketingPage() {
                   </div>
                 ) : (
                   <>
-                    {playbook!.posts.map((post, idx) => (
+                    {playbook!.posts.map((post: MarketingPost, idx: number) => (
                       <div className="campaign-card" key={`${post.title}-${idx}`}>
                         <div>
                           <strong>{post.title}</strong>
@@ -440,6 +546,14 @@ export default function MarketingPage() {
                           </small>
                         </div>
                         <p>{post.content}</p>
+                        {interestForm(`post-${idx}`, {
+                          title: post.title,
+                          channel:
+                            post.channel === "whatsapp" ||
+                            post.channel === "email"
+                              ? post.channel
+                              : "social",
+                        })}
                       </div>
                     ))}
                     <button
@@ -470,9 +584,7 @@ export default function MarketingPage() {
             {campaigns.length === 0 ? (
               <div className="empty">
                 <strong>Nenhuma campanha</strong>
-                <p>
-                  Conclua o pacote Essencial ou planeje uma ação manual abaixo.
-                </p>
+                <p>Conclua o Essencial ou planeje uma ação manual.</p>
               </div>
             ) : (
               campaigns.map((item) => (
@@ -503,6 +615,14 @@ export default function MarketingPage() {
                       </button>
                     ))}
                   </div>
+                  {interestForm(`camp-${item.id}`, {
+                    title: item.name,
+                    channel:
+                      item.channel === "whatsapp" || item.channel === "email"
+                        ? item.channel
+                        : "social",
+                    campaignId: item.id,
+                  })}
                 </div>
               ))
             )}
@@ -530,12 +650,7 @@ export default function MarketingPage() {
               </label>
               <label>
                 Público
-                <input
-                  name="audience"
-                  required
-                  minLength={2}
-                  placeholder="Ex.: leads qualificados"
-                />
+                <input name="audience" required minLength={2} />
               </label>
               <label>
                 Conteúdo
@@ -545,6 +660,83 @@ export default function MarketingPage() {
                 Criar campanha
               </button>
             </form>
+          </article>
+        </div>
+      )}
+
+      {view === "conversion" && (
+        <div className="content-grid">
+          <article className="panel">
+            <div className="panel-title">
+              <div>
+                <span>FUNIL</span>
+                <h2>Conteúdo → interesse → CRM</h2>
+              </div>
+            </div>
+            <p style={{ opacity: 0.85 }}>
+              Cada interesse vira contato + oportunidade em estágio{" "}
+              <strong>new</strong> e tarefa de handoff para o agente comercial
+              ou WhatsApp.
+            </p>
+            <div className="proposal-actions">
+              <Link href="/app/crm">Abrir CRM</Link>
+              <Link href="/app/inbox">Abrir Inbox</Link>
+            </div>
+            {conversion && (
+              <div className="campaign-metrics" style={{ marginTop: 16 }}>
+                <span>Social: {conversion.by_channel.social}</span>
+                <span>E-mail: {conversion.by_channel.email}</span>
+                <span>WhatsApp: {conversion.by_channel.whatsapp}</span>
+              </div>
+            )}
+          </article>
+
+          <article className="panel">
+            <div className="panel-title">
+              <div>
+                <span>LEADS</span>
+                <h2>Interesses registrados</h2>
+              </div>
+            </div>
+            {leads.length === 0 ? (
+              <div className="empty">
+                <strong>Nenhum interesse ainda</strong>
+                <p>
+                  Nas peças ou campanhas, use “Registrar interesse → CRM” quando
+                  alguém engajar.
+                </p>
+              </div>
+            ) : (
+              leads.map((lead) => (
+                <div className="campaign-card" key={lead.id}>
+                  <div>
+                    <strong>{lead.contact_name}</strong>
+                    <small>
+                      {lead.source_channel} · {lead.source_title}
+                    </small>
+                  </div>
+                  <span className={`finance-status ${lead.status}`}>
+                    {lead.status}
+                  </span>
+                  <p>
+                    {[lead.phone, lead.email].filter(Boolean).join(" · ") ||
+                      "Sem telefone/e-mail"}
+                    {lead.note ? ` — ${lead.note}` : ""}
+                  </p>
+                  <div className="campaign-metrics">
+                    <span>Contato: {lead.contact_id ? "sim" : "não"}</span>
+                    <span>
+                      Oportunidade: {lead.opportunity_id ? "sim" : "não"}
+                    </span>
+                    <span>
+                      {lead.created_at
+                        ? new Date(lead.created_at).toLocaleString("pt-BR")
+                        : ""}
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
           </article>
         </div>
       )}

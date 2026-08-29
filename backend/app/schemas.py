@@ -110,6 +110,17 @@ class MarketingDiscoveryIn(BaseModel):
     seasonality:str=Field(default="",max_length=1000)
     monthly_budget:str=Field(min_length=1,max_length=500)
 
+class MarketingLeadIn(BaseModel):
+    contact_name:str=Field(min_length=2,max_length=160)
+    phone:str|None=Field(default=None,max_length=30)
+    email:str|None=Field(default=None,max_length=255)
+    note:str|None=Field(default=None,max_length=2000)
+    source_title:str=Field(min_length=2,max_length=180)
+    source_channel:str=Field(default="social",pattern=r"^(whatsapp|email|social)$")
+    campaign_id:str|None=None
+    company:str|None=Field(default=None,max_length=160)
+    value_cents:int=Field(default=0,ge=0)
+
 class LlmSettingsIn(BaseModel):
     provider:str=Field(pattern=r"^(openai|groq|openrouter)$")
     model_name:str=Field(min_length=2,max_length=120)

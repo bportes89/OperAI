@@ -92,6 +92,34 @@ export type Analytics = {
     unread_messages: number;
     campaigns: number;
   };
+  marketing?: {
+    interests_7d: number;
+    leads_7d: number;
+    opportunities_7d: number;
+  };
+};
+
+export type MarketingLead = {
+  id: string;
+  source_title: string;
+  source_channel: string;
+  contact_name: string;
+  phone: string | null;
+  email: string | null;
+  note: string | null;
+  status: string;
+  campaign_id: string | null;
+  contact_id: string | null;
+  opportunity_id: string | null;
+  created_at: string | null;
+};
+
+export type MarketingConversion = {
+  window_days: number;
+  interests: number;
+  leads_with_contact: number;
+  opportunities: number;
+  by_channel: { social: number; email: number; whatsapp: number };
 };
 
 export type Activity = {

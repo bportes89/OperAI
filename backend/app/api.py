@@ -13,7 +13,7 @@ from app.core.security import create_access_token,hash_password,hash_refresh_tok
 from app.crypto import decrypt_secret,encrypt_secret
 from app.models import (
     Agent,AgentTask,AuditLog,Channel,ChannelMessage,Contact,Conversation,ConversationMessage,
-    InboxThread,KnowledgeChunk,KnowledgeDocument,LlmCredential,MarketingCampaign,MarketingPlaybook,Membership,
+    InboxThread,KnowledgeChunk,KnowledgeDocument,LlmCredential,MarketingCampaign,MarketingLead,MarketingPlaybook,Membership,
     Opportunity,Organization,OrganizationOnboarding,OrganizationSubscription,Receivable,
     ReceivablePayment,RefreshSession,Role,SaaSPlan,User,
 )
@@ -21,7 +21,7 @@ from app.rag import embed_text,retrieve
 from app.schemas import (
     AgentIn,AgentQueryIn,AgentStatusIn,CampaignIn,CampaignStatusIn,ChannelIn,CheckoutIn,
     EvolutionConnectIn,IncomingMessageIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,
-    MarketingDiagnosisIn,MarketingDiscoveryIn,OnboardingUpdateIn,OpportunityIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
+    MarketingDiagnosisIn,MarketingDiscoveryIn,MarketingLeadIn,OnboardingUpdateIn,OpportunityIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
     RegisterIn,TeamMemberIn,TeamMemberUpdateIn,TokenPair,
 )
 
@@ -811,6 +811,148 @@ async def materialize_marketing_posts(p:Annotated[Principal,Depends(require_role
     await db.commit()
     return {"created":len(created),"campaigns":[{"id":str(c.id),"name":c.name,"channel":c.channel,"status":c.status} for c in created]}
 
+def _normalize_phone(value:str|None)->str|None:
+    if not value:return None
+    digits="".join(ch for ch in value if ch.isdigit())
+    return digits[:30] if digits else None
+
+def _lead_out(item:MarketingLead)->dict:
+    return {
+        "id":str(item.id),
+        "source_title":item.source_title,
+        "source_channel":item.source_channel,
+        "contact_name":item.contact_name,
+        "phone":item.phone,
+        "email":item.email,
+        "note":item.note,
+        "status":item.status,
+        "campaign_id":str(item.campaign_id) if item.campaign_id else None,
+        "contact_id":str(item.contact_id) if item.contact_id else None,
+        "opportunity_id":str(item.opportunity_id) if item.opportunity_id else None,
+        "created_at":item.created_at.isoformat() if item.created_at else None,
+    }
+
+@router.get("/marketing/leads")
+async def list_marketing_leads(p:Annotated[Principal,Depends(current_principal)],db:Db):
+    rows=(await db.scalars(select(MarketingLead).where(MarketingLead.organization_id==p.organization_id).order_by(MarketingLead.created_at.desc()).limit(100))).all()
+    return [_lead_out(x) for x in rows]
+
+@router.get("/marketing/conversion")
+async def marketing_conversion_stats(p:Annotated[Principal,Depends(current_principal)],db:Db):
+    since=datetime.now(UTC)-timedelta(days=7)
+    rows=(await db.scalars(select(MarketingLead).where(and_(MarketingLead.organization_id==p.organization_id,MarketingLead.created_at>=since)))).all()
+    with_contact=sum(1 for x in rows if x.contact_id)
+    with_opp=sum(1 for x in rows if x.opportunity_id)
+    return {
+        "window_days":7,
+        "interests":len(rows),
+        "leads_with_contact":with_contact,
+        "opportunities":with_opp,
+        "by_channel":{
+            "social":sum(1 for x in rows if x.source_channel=="social"),
+            "email":sum(1 for x in rows if x.source_channel=="email"),
+            "whatsapp":sum(1 for x in rows if x.source_channel=="whatsapp"),
+        },
+    }
+
+@router.post("/marketing/leads",status_code=201)
+async def create_marketing_lead(data:MarketingLeadIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER,Role.OPERATOR))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    phone=_normalize_phone(data.phone)
+    email=(data.email or "").strip().lower() or None
+    if not phone and not email:raise HTTPException(422,"Informe telefone ou e-mail do interessado")
+    campaign_uuid=None
+    if data.campaign_id:
+        campaign_uuid=parse_uuid(data.campaign_id,"Campaign")
+        camp=await db.scalar(select(MarketingCampaign).where(and_(MarketingCampaign.id==campaign_uuid,MarketingCampaign.organization_id==p.organization_id)))
+        if not camp:raise HTTPException(404,"Campaign not found")
+        if camp.status in {"draft","approved","scheduled","running"}:
+            camp.response_count=int(camp.response_count or 0)+1
+
+    contact=None
+    if phone:
+        contact=await db.scalar(select(Contact).where(and_(Contact.organization_id==p.organization_id,Contact.phone==phone)))
+    if not contact:
+        # Contact.phone is required+unique — use real phone or stable synthetic key for email-only leads
+        contact_phone=phone or f"mkt:{email}"[:30]
+        existing=await db.scalar(select(Contact).where(and_(Contact.organization_id==p.organization_id,Contact.phone==contact_phone)))
+        if existing:
+            contact=existing
+            if data.contact_name and contact.name!=data.contact_name:contact.name=data.contact_name[:160]
+        else:
+            contact=Contact(organization_id=p.organization_id,name=data.contact_name[:160],phone=contact_phone)
+            db.add(contact);await db.flush()
+
+    company=(data.company or data.contact_name)[:160]
+    opportunity=Opportunity(
+        organization_id=p.organization_id,
+        company=company,
+        contact=data.contact_name[:160],
+        stage="new",
+        value_cents=data.value_cents,
+    )
+    db.add(opportunity);await db.flush()
+
+    lead=MarketingLead(
+        organization_id=p.organization_id,
+        created_by=p.user_id,
+        campaign_id=campaign_uuid,
+        contact_id=contact.id,
+        opportunity_id=opportunity.id,
+        source_title=data.source_title[:180],
+        source_channel=data.source_channel,
+        contact_name=data.contact_name[:160],
+        phone=phone,
+        email=email,
+        note=data.note,
+        status="handed_off",
+    )
+    db.add(lead);await db.flush()
+
+    handoff_agent=await db.scalar(
+        select(Agent).where(and_(Agent.organization_id==p.organization_id,Agent.agent_type.in_(["commercial","whatsapp"]),Agent.status=="active")).order_by(Agent.agent_type.asc())
+    )
+    if not handoff_agent:
+        handoff_agent=await db.scalar(select(Agent).where(and_(Agent.organization_id==p.organization_id,Agent.agent_type=="marketing")).order_by(Agent.created_at.asc()))
+
+    db.add(AgentTask(
+        organization_id=p.organization_id,
+        agent_id=handoff_agent.id if handoff_agent else None,
+        created_by=p.user_id,
+        idempotency_key=f"mkt-lead:{lead.id}",
+        task_type="marketing.handoff",
+        title=f"Lead: {data.contact_name[:80]}",
+        priority="high",
+        status="queued",
+        input_data={
+            "lead_id":str(lead.id),
+            "opportunity_id":str(opportunity.id),
+            "contact_id":str(contact.id),
+            "source_title":data.source_title,
+            "source_channel":data.source_channel,
+            "phone":phone,
+            "email":email,
+            "note":data.note,
+            "next_step":"Qualificar no CRM e seguir no WhatsApp/comercial",
+        },
+    ))
+    db.add(AuditLog(
+        organization_id=p.organization_id,user_id=p.user_id,
+        action="marketing.lead_handed_off",resource="marketing_lead",
+        detail=f"{data.source_title}:{data.contact_name}",
+    ))
+    await db.commit();await db.refresh(lead)
+    return {
+        **_lead_out(lead),
+        "handoff":{
+            "contact_id":str(contact.id),
+            "opportunity_id":str(opportunity.id),
+            "agent_id":str(handoff_agent.id) if handoff_agent else None,
+            "crm_path":"/app/crm",
+            "inbox_path":"/app/inbox",
+        },
+    }
+
 @router.get("/analytics/overview")
 async def analytics_overview(p:Annotated[Principal,Depends(current_principal)],db:Db):
     opportunities=(await db.scalars(select(Opportunity).where(Opportunity.organization_id==p.organization_id))).all()
@@ -818,10 +960,13 @@ async def analytics_overview(p:Annotated[Principal,Depends(current_principal)],d
     agents_rows=(await db.scalars(select(Agent).where(Agent.organization_id==p.organization_id))).all()
     threads=(await db.scalars(select(InboxThread).where(InboxThread.organization_id==p.organization_id))).all()
     campaigns=(await db.scalars(select(MarketingCampaign).where(MarketingCampaign.organization_id==p.organization_id))).all()
+    since=datetime.now(UTC)-timedelta(days=7)
+    mkt_leads=(await db.scalars(select(MarketingLead).where(and_(MarketingLead.organization_id==p.organization_id,MarketingLead.created_at>=since)))).all()
     return {
         "crm":{"opportunities":len(opportunities),"pipeline_cents":sum(x.value_cents for x in opportunities),"won":sum(1 for x in opportunities if x.stage=="won")},
         "finance":{"pending_cents":sum(x.amount_cents for x in receivables if x.status=="pending"),"overdue_cents":sum(x.amount_cents for x in receivables if x.status=="pending" and x.due_date<date.today()),"paid_cents":sum(x.amount_cents for x in receivables if x.status=="paid")},
         "operations":{"active_agents":sum(1 for x in agents_rows if x.status=="active"),"open_threads":sum(1 for x in threads if x.status=="open"),"unread_messages":sum(x.unread_count for x in threads),"campaigns":len(campaigns)},
+        "marketing":{"interests_7d":len(mkt_leads),"leads_7d":sum(1 for x in mkt_leads if x.contact_id),"opportunities_7d":sum(1 for x in mkt_leads if x.opportunity_id)},
     }
 
 @router.get("/analytics/activity")

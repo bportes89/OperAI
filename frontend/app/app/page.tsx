@@ -91,6 +91,10 @@ export default function DashboardPage() {
                 <span>Campanhas</span>
                 <strong>{analytics.operations.campaigns}</strong>
               </div>
+              <div>
+                <span>Leads marketing (7d)</span>
+                <strong>{analytics.marketing?.interests_7d ?? 0}</strong>
+              </div>
             </div>
           ) : (
             <div className="empty">
