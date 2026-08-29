@@ -51,6 +51,13 @@ function messageFromBody(body: unknown, fallback: string): string {
   if (!body || typeof body !== "object") return fallback;
   const detail = (body as { detail?: unknown }).detail;
   if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object") {
+    const msg = (detail as { message?: unknown }).message;
+    if (typeof msg === "string" && msg.trim()) return msg;
+    const reason = (detail as { reason?: unknown }).reason;
+    if (reason === "plan_limit") return "Limite do plano atingido. Faça upgrade em Planos.";
+    if (reason === "trial_expired") return "Trial expirado. Assine um plano para continuar.";
+  }
   if (Array.isArray(detail) && detail[0]?.msg) return String(detail[0].msg);
   return fallback;
 }

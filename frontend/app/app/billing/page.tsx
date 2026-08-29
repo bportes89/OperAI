@@ -6,6 +6,7 @@ import { money } from "../../lib/format";
 import type {
   BillingPlan,
   CheckoutResult,
+  PlanUsage,
   Subscription,
 } from "../../lib/types";
 
@@ -28,9 +29,16 @@ function normalizePlan(raw: Record<string, unknown>): BillingPlan {
   };
 }
 
+const USAGE_LABELS: { key: keyof PlanUsage["usage"]; label: string }[] = [
+  { key: "agents", label: "Agentes ativos" },
+  { key: "users", label: "Membros" },
+  { key: "documents", label: "Documentos na base" },
+];
+
 export default function BillingPage() {
   const [plans, setPlans] = useState<BillingPlan[]>([]);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const [usage, setUsage] = useState<PlanUsage | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -72,6 +80,12 @@ export default function BillingPage() {
     } catch {
       setSubscription(null);
       errors.push("Não foi possível carregar o status da assinatura.");
+    }
+
+    try {
+      setUsage(await apiJson<PlanUsage>("/api/v1/billing/usage"));
+    } catch {
+      setUsage(null);
     }
 
     if (errors.length) setError(errors.join(" "));
@@ -205,6 +219,43 @@ export default function BillingPage() {
         )}
       </article>
 
+      {usage && (
+        <article className="panel" style={{ marginBottom: 18 }}>
+          <div className="panel-title">
+            <div>
+              <span>USO DO PLANO</span>
+              <h2>Limites em vigor</h2>
+            </div>
+          </div>
+          <p style={{ marginTop: 0, opacity: 0.85, lineHeight: 1.5 }}>
+            Ao atingir o teto, a API bloqueia novos agentes, membros ou
+            documentos até o upgrade.
+          </p>
+          <div className="metrics">
+            {USAGE_LABELS.map(({ key, label }) => {
+              const slot = usage.usage[key];
+              const lim = slot.limit;
+              return (
+                <article key={key}>
+                  <span>{label}</span>
+                  <strong>
+                    {slot.used}
+                    {lim != null ? ` / ${lim}` : ""}
+                  </strong>
+                  <small>
+                    {slot.reached
+                      ? "limite atingido"
+                      : lim != null
+                        ? `${slot.remaining} restante(s)`
+                        : "sem teto"}
+                  </small>
+                </article>
+              );
+            })}
+          </div>
+        </article>
+      )}
+
       <div className="pricing-grid" style={{ marginBottom: 18 }}>
         {loading && plans.length === 0 ? (
           <article className="panel">
@@ -229,11 +280,18 @@ export default function BillingPage() {
                 <small>/mês</small>
               </div>
               <ul>
+                {plan.limits && (
+                  <>
+                    <li>Até {plan.limits.agents ?? "—"} agentes</li>
+                    <li>Até {plan.limits.users ?? "—"} membros</li>
+                    <li>Até {plan.limits.documents ?? "—"} documentos</li>
+                  </>
+                )}
                 {planFeatures(plan).length > 0 ? (
                   planFeatures(plan).map((f) => <li key={f}>{f}</li>)
-                ) : (
+                ) : !plan.limits ? (
                   <li>Recursos do plano {plan.name}</li>
-                )}
+                ) : null}
               </ul>
               <button
                 type="button"

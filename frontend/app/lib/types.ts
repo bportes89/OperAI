@@ -369,6 +369,24 @@ export type CheckoutResult = {
   mode?: string;
 };
 
+export type PlanUsageSlot = {
+  used: number;
+  limit: number | null;
+  remaining: number | null;
+  reached: boolean;
+};
+
+export type PlanUsage = {
+  plan_slug?: string | null;
+  plan_name?: string | null;
+  limits?: Record<string, number>;
+  usage: {
+    agents: PlanUsageSlot;
+    users: PlanUsageSlot;
+    documents: PlanUsageSlot;
+  };
+};
+
 export const AGENT_LABELS: Record<string, string> = {
   commercial: "Comercial",
   whatsapp: "Atendimento",

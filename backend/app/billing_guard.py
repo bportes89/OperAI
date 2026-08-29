@@ -1,12 +1,26 @@
 from datetime import date, timedelta
 import uuid
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
-from app.models import Organization, OrganizationOnboarding, OrganizationSubscription, SaaSPlan
+from app.models import (
+    Agent,
+    KnowledgeDocument,
+    Membership,
+    Organization,
+    OrganizationOnboarding,
+    OrganizationSubscription,
+    SaaSPlan,
+)
 
 ALLOWED_STATUSES = {"trialing", "active", "paid"}
+
+RESOURCE_LABELS = {
+    "agents": "agentes ativos",
+    "users": "membros da equipe",
+    "documents": "documentos na base",
+}
 
 
 async def require_billing_access(org_id: uuid.UUID, db: AsyncSession) -> OrganizationSubscription:
@@ -25,6 +39,96 @@ async def require_billing_access(org_id: uuid.UUID, db: AsyncSession) -> Organiz
     if status not in ALLOWED_STATUSES:
         raise HTTPException(402, detail={"access": False, "reason": status or "inactive"})
     return sub
+
+
+async def get_org_plan(org_id: uuid.UUID, db: AsyncSession) -> SaaSPlan | None:
+    sub = await db.scalar(
+        select(OrganizationSubscription).where(OrganizationSubscription.organization_id == org_id)
+    )
+    if not sub:
+        return None
+    return await db.scalar(select(SaaSPlan).where(SaaSPlan.id == sub.plan_id))
+
+
+async def plan_usage(org_id: uuid.UUID, db: AsyncSession) -> dict:
+    plan = await get_org_plan(org_id, db)
+    limits = dict(plan.limits or {}) if plan else {}
+    agents = int(
+        await db.scalar(
+            select(func.count())
+            .select_from(Agent)
+            .where(Agent.organization_id == org_id, Agent.status == "active")
+        )
+        or 0
+    )
+    users = int(
+        await db.scalar(
+            select(func.count())
+            .select_from(Membership)
+            .where(Membership.organization_id == org_id, Membership.active.is_(True))
+        )
+        or 0
+    )
+    documents = int(
+        await db.scalar(
+            select(func.count())
+            .select_from(KnowledgeDocument)
+            .where(KnowledgeDocument.organization_id == org_id)
+        )
+        or 0
+    )
+    used = {"agents": agents, "users": users, "documents": documents}
+    out = {}
+    for key in ("agents", "users", "documents"):
+        raw_limit = limits.get(key)
+        limit = int(raw_limit) if raw_limit is not None else None
+        current = used[key]
+        out[key] = {
+            "used": current,
+            "limit": limit,
+            "remaining": None if limit is None else max(limit - current, 0),
+            "reached": False if limit is None else current >= limit,
+        }
+    return {
+        "plan_slug": plan.slug if plan else None,
+        "plan_name": plan.name if plan else None,
+        "limits": limits,
+        "usage": out,
+    }
+
+
+async def require_plan_capacity(
+    org_id: uuid.UUID,
+    db: AsyncSession,
+    resource: str,
+    *,
+    adding: int = 1,
+) -> dict:
+    """Bloqueia criação/ativação quando o plano estourou o limite."""
+    await require_billing_access(org_id, db)
+    usage = await plan_usage(org_id, db)
+    slot = usage["usage"].get(resource) or {}
+    limit = slot.get("limit")
+    used = int(slot.get("used") or 0)
+    if limit is None:
+        return usage
+    if used + adding > int(limit):
+        label = RESOURCE_LABELS.get(resource, resource)
+        raise HTTPException(
+            402,
+            detail={
+                "access": True,
+                "reason": "plan_limit",
+                "resource": resource,
+                "limit": int(limit),
+                "used": used,
+                "message": (
+                    f"Limite do plano atingido: {used}/{limit} {label}. "
+                    "Faça upgrade em Planos para continuar."
+                ),
+            },
+        )
+    return usage
 
 
 async def ensure_subscription_on_register(

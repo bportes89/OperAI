@@ -7,7 +7,7 @@ from sqlalchemy import and_,select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app import asaas,evolution,llm,meta_whatsapp
 from app.auth import Principal,current_principal,require_roles
-from app.billing_guard import ensure_subscription_on_register,require_billing_access,subscription_access_payload
+from app.billing_guard import ensure_subscription_on_register,plan_usage,require_billing_access,require_plan_capacity,subscription_access_payload
 from app.core.config import get_settings
 from app.core.database import get_session
 from app.core.security import create_access_token,create_password_reset_token,decode_password_reset_token,hash_password,hash_refresh_token,new_refresh_token,verify_password
@@ -295,6 +295,11 @@ async def billing_subscription(p:Annotated[Principal,Depends(current_principal)]
     if sub:plan=await db.scalar(select(SaaSPlan).where(SaaSPlan.id==sub.plan_id))
     return subscription_access_payload(sub,plan)
 
+@router.get("/billing/usage")
+async def billing_usage(p:Annotated[Principal,Depends(current_principal)],db:Db):
+    await require_billing_access(p.organization_id,db)
+    return await plan_usage(p.organization_id,db)
+
 @router.post("/billing/checkout")
 async def billing_checkout(data:CheckoutIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN))],db:Db):
     plan=await db.scalar(select(SaaSPlan).where(and_(SaaSPlan.slug==data.plan_slug,SaaSPlan.active.is_(True))))
@@ -533,10 +538,12 @@ async def activate_onboarding_whatsapp_agent(p:Annotated[Principal,Depends(requi
     existing=await db.scalar(select(Agent).where(and_(Agent.organization_id==p.organization_id,Agent.agent_type=="whatsapp")).order_by(Agent.created_at.asc()))
     if existing:
         if existing.status!="active":
+            await require_plan_capacity(p.organization_id,db,"agents")
             existing.status="active"
             db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="agent.status_changed",resource="agent",detail=f"{existing.name}:active"))
         await db.commit();await db.refresh(existing)
         return _agent_out(existing)
+    await require_plan_capacity(p.organization_id,db,"agents")
     item=Agent(
         organization_id=p.organization_id,
         name=preset["name"],
@@ -681,9 +688,11 @@ async def create_agent_from_preset(data:AgentFromPresetIn,p:Annotated[Principal,
     existing=await db.scalar(select(Agent).where(and_(Agent.organization_id==p.organization_id,Agent.agent_type==preset["agent_type"])).order_by(Agent.created_at.asc()))
     if existing:
         if existing.status!="active":
+            await require_plan_capacity(p.organization_id,db,"agents")
             existing.status="active"
         await db.commit();await db.refresh(existing)
         return _agent_out(existing)
+    await require_plan_capacity(p.organization_id,db,"agents")
     if await db.scalar(select(Agent).where(and_(Agent.organization_id==p.organization_id,Agent.name==name))):
         raise HTTPException(409,"Já existe um agente com este nome")
     item=Agent(
@@ -701,6 +710,7 @@ async def create_agent_from_preset(data:AgentFromPresetIn,p:Annotated[Principal,
 async def create_agent(data:AgentIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER))],db:Db):
     await require_billing_access(p.organization_id,db)
     if await db.scalar(select(Agent).where(and_(Agent.organization_id==p.organization_id,Agent.name==data.name))):raise HTTPException(409,"Agent name already exists")
+    # Default do modelo é draft — não consome limite até ativar
     item=Agent(organization_id=p.organization_id,**data.model_dump())
     db.add_all([item,AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="agent.created",resource="agent",detail=data.name)])
     await db.commit();await db.refresh(item)
@@ -711,6 +721,8 @@ async def change_agent_status(agent_id:str,data:AgentStatusIn,p:Annotated[Princi
     await require_billing_access(p.organization_id,db)
     item=await db.scalar(select(Agent).where(and_(Agent.id==parse_uuid(agent_id,"Agent"),Agent.organization_id==p.organization_id)))
     if not item:raise HTTPException(404,"Agent not found")
+    if data.status=="active" and item.status!="active":
+        await require_plan_capacity(p.organization_id,db,"agents")
     item.status=data.status
     db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="agent.status_changed",resource="agent",detail=f"{item.name}:{data.status}"))
     await db.commit();return {"id":str(item.id),"status":item.status}
@@ -723,6 +735,7 @@ async def knowledge_documents(p:Annotated[Principal,Depends(current_principal)],
 @router.post("/knowledge/documents",status_code=201)
 async def create_knowledge_document(data:KnowledgeDocumentIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER,Role.OPERATOR))],db:Db):
     await require_billing_access(p.organization_id,db)
+    await require_plan_capacity(p.organization_id,db,"documents")
     parts=split_content(data.content)
     item=KnowledgeDocument(organization_id=p.organization_id,title=data.title,source_type=data.source_type,content=data.content,chunk_count=len(parts))
     db.add(item);await db.flush()
@@ -738,6 +751,7 @@ async def upload_knowledge_document(
     title:str|None=Form(default=None),
 ):
     await require_billing_access(p.organization_id,db)
+    await require_plan_capacity(p.organization_id,db,"documents")
     raw=await file.read()
     try:
         content,source_type,meta=extract_text_from_upload(file.filename or "arquivo.pdf",raw)
@@ -1238,8 +1252,11 @@ async def finance_summary(p:Annotated[Principal,Depends(current_principal)],db:D
 async def _ensure_finance_agent(org_id:uuid.UUID,user_id:uuid.UUID,db:AsyncSession)->Agent:
     agent=await db.scalar(select(Agent).where(and_(Agent.organization_id==org_id,Agent.agent_type=="finance")).order_by(Agent.created_at.asc()))
     if agent:
-        if agent.status!="active":agent.status="active"
+        if agent.status!="active":
+            await require_plan_capacity(org_id,db,"agents")
+            agent.status="active"
         return agent
+    await require_plan_capacity(org_id,db,"agents")
     preset=next((x for x in llm.AGENT_PRESETS if x["id"]=="finance"),None)
     agent=Agent(
         organization_id=org_id,
@@ -1595,8 +1612,10 @@ async def _ensure_marketing_agent(org_id:uuid.UUID,user_id:uuid.UUID,db:AsyncSes
     agent=await db.scalar(select(Agent).where(and_(Agent.organization_id==org_id,Agent.agent_type=="marketing")).order_by(Agent.created_at.asc()))
     if agent:
         if agent.status!="active":
+            await require_plan_capacity(org_id,db,"agents")
             agent.status="active"
         return agent
+    await require_plan_capacity(org_id,db,"agents")
     agent=Agent(
         organization_id=org_id,
         name="Agente Gestor",
@@ -2389,6 +2408,7 @@ async def team_members(p:Annotated[Principal,Depends(current_principal)],db:Db):
 @router.post("/team/members",status_code=201)
 async def create_team_member(data:TeamMemberIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN))],db:Db):
     await require_billing_access(p.organization_id,db)
+    await require_plan_capacity(p.organization_id,db,"users")
     if data.role=="owner" and p.role!=Role.OWNER:raise HTTPException(403,"Only owners can create owners")
     if await db.scalar(select(User.id).where(User.email==data.email)):raise HTTPException(409,"Email already belongs to an account")
     user=User(name=data.name,email=data.email,password_hash=hash_password(data.password));db.add(user);await db.flush()
