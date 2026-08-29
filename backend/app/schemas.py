@@ -128,6 +128,7 @@ class MarketingGovernanceIn(BaseModel):
     crisis_escalation:bool|None=None
     lgpd_note:str|None=Field(default=None,max_length=4000)
     account_checklist:dict|None=None
+    seo_checklist:dict|None=None
 
 class MarketingSpendIn(BaseModel):
     channel:str=Field(pattern=r"^(google_ads|meta_ads|other)$")
@@ -136,6 +137,20 @@ class MarketingSpendIn(BaseModel):
 
 class MarketingSpendReviewIn(BaseModel):
     status:str=Field(pattern=r"^(approved|rejected)$")
+
+class MarketingEngagementIn(BaseModel):
+    label:str=Field(min_length=2,max_length=180)
+    channel:str=Field(default="social",pattern=r"^(whatsapp|email|social)$")
+    campaign_id:str|None=None
+    views:int=Field(default=0,ge=0)
+    clicks:int=Field(default=0,ge=0)
+    likes:int=Field(default=0,ge=0)
+    comments:int=Field(default=0,ge=0)
+    best_day:str|None=Field(default=None,max_length=40)
+    audience_note:str|None=Field(default=None,max_length=2000)
+
+class MarketingPackageIn(BaseModel):
+    package:str=Field(pattern=r"^(essencial|crescimento|aceleracao)$")
 
 class LlmSettingsIn(BaseModel):
     provider:str=Field(pattern=r"^(openai|groq|openrouter)$")

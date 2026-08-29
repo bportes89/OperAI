@@ -8,13 +8,23 @@ import {
   CAMPAIGN_TRANSITIONS,
   type Campaign,
   type MarketingConversion,
+  type MarketingEngagement,
   type MarketingGovernance,
+  type MarketingGrowth,
   type MarketingLead,
   type MarketingPlaybook,
   type MarketingPost,
   type MarketingSpendRequest,
 } from "../../lib/types";
 import { money } from "../../lib/format";
+
+const SEO_LABELS: Record<string, string> = {
+  google_business_profile: "Perfil Google Business completo e verificado",
+  nap_consistent: "Nome, endereço e telefone consistentes (NAP)",
+  site_basic_seo: "SEO básico no site (títulos, meta, mobile)",
+  faq_on_site: "FAQ / políticas publicadas no site ou base OperAI",
+  local_keywords: "Palavras-chave locais definidas",
+};
 
 const WIZARD_STEPS = [
   { key: "diagnosis", label: "1. Diagnóstico" },
@@ -35,30 +45,37 @@ export default function MarketingPage() {
   const [conversion, setConversion] = useState<MarketingConversion | null>(null);
   const [governance, setGovernance] = useState<MarketingGovernance | null>(null);
   const [spends, setSpends] = useState<MarketingSpendRequest[]>([]);
+  const [growth, setGrowth] = useState<MarketingGrowth | null>(null);
+  const [engagements, setEngagements] = useState<MarketingEngagement[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<
-    "wizard" | "campaigns" | "conversion" | "governance"
+    "wizard" | "campaigns" | "conversion" | "governance" | "growth"
   >("wizard");
   const [interestFor, setInterestFor] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       setError("");
-      const [pb, cams, leadRows, conv, gov, spendRows] = await Promise.all([
-        apiJson<MarketingPlaybook>("/api/v1/marketing/playbook"),
-        apiJson<Campaign[]>("/api/v1/marketing/campaigns"),
-        apiJson<MarketingLead[]>("/api/v1/marketing/leads"),
-        apiJson<MarketingConversion>("/api/v1/marketing/conversion"),
-        apiJson<MarketingGovernance>("/api/v1/marketing/governance"),
-        apiJson<MarketingSpendRequest[]>("/api/v1/marketing/spend-requests"),
-      ]);
+      const [pb, cams, leadRows, conv, gov, spendRows, growthData, engRows] =
+        await Promise.all([
+          apiJson<MarketingPlaybook>("/api/v1/marketing/playbook"),
+          apiJson<Campaign[]>("/api/v1/marketing/campaigns"),
+          apiJson<MarketingLead[]>("/api/v1/marketing/leads"),
+          apiJson<MarketingConversion>("/api/v1/marketing/conversion"),
+          apiJson<MarketingGovernance>("/api/v1/marketing/governance"),
+          apiJson<MarketingSpendRequest[]>("/api/v1/marketing/spend-requests"),
+          apiJson<MarketingGrowth>("/api/v1/marketing/growth"),
+          apiJson<MarketingEngagement[]>("/api/v1/marketing/engagements"),
+        ]);
       setPlaybook(pb);
       setCampaigns(cams);
       setLeads(leadRows);
       setConversion(conv);
       setGovernance(gov);
       setSpends(spendRows);
+      setGrowth(growthData);
+      setEngagements(engRows);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -294,10 +311,66 @@ export default function MarketingPage() {
               meta_business: data.meta_business === "on",
               whatsapp_business: data.whatsapp_business === "on",
             },
+            seo_checklist: {
+              google_business_profile: data.google_business_profile === "on",
+              nap_consistent: data.nap_consistent === "on",
+              site_basic_seo: data.site_basic_seo === "on",
+              faq_on_site: data.faq_on_site === "on",
+              local_keywords: data.local_keywords === "on",
+            },
           }),
         },
       );
       setGovernance(gov);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function logEngagement(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    const form = event.currentTarget;
+    const data = Object.fromEntries(new FormData(form));
+    try {
+      await apiJson("/api/v1/marketing/engagements", {
+        method: "POST",
+        body: JSON.stringify({
+          label: data.label,
+          channel: data.channel,
+          views: Number(data.views || 0),
+          clicks: Number(data.clicks || 0),
+          likes: Number(data.likes || 0),
+          comments: Number(data.comments || 0),
+          best_day: data.best_day || null,
+          audience_note: data.audience_note || null,
+          campaign_id: data.campaign_id || null,
+        }),
+      });
+      form.reset();
+      await load();
+      setView("growth");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function upgradePackage(packageName: string) {
+    setBusy(true);
+    setError("");
+    try {
+      await apiJson("/api/v1/marketing/playbook/upgrade", {
+        method: "POST",
+        body: JSON.stringify({ package: packageName }),
+      });
+      await load();
+      setView("growth");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -401,6 +474,13 @@ export default function MarketingPage() {
             onClick={() => setView("governance")}
           >
             Governança
+          </button>
+          <button
+            type="button"
+            className={view === "growth" ? "primary" : undefined}
+            onClick={() => setView("growth")}
+          >
+            Crescimento
           </button>
         </div>
       </header>
@@ -949,6 +1029,20 @@ export default function MarketingPage() {
                 />
                 WhatsApp Business / API credenciado
               </label>
+              <strong style={{ marginTop: 12 }}>Checklist SEO / Google</strong>
+              {Object.entries(SEO_LABELS).map(([key, label]) => (
+                <label
+                  key={key}
+                  style={{ display: "flex", gap: 8, alignItems: "center" }}
+                >
+                  <input
+                    name={key}
+                    type="checkbox"
+                    defaultChecked={!!governance.seo_checklist?.[key]}
+                  />
+                  {label}
+                </label>
+              ))}
               <button className="primary" disabled={busy} type="submit">
                 Salvar governança
               </button>
@@ -1029,6 +1123,169 @@ export default function MarketingPage() {
                 </div>
               ))
             )}
+          </article>
+        </div>
+      )}
+
+      {view === "growth" && growth && (
+        <div className="content-grid">
+          <article className="panel">
+            <div className="panel-title">
+              <div>
+                <span>DADOS</span>
+                <h2>Engajamento (7 dias)</h2>
+              </div>
+            </div>
+            <div className="metrics">
+              <article>
+                <span>Views</span>
+                <strong>{growth.engagement_7d.views}</strong>
+                <small>{growth.engagement_7d.entries} leituras</small>
+              </article>
+              <article>
+                <span>Cliques / CTR</span>
+                <strong>
+                  {growth.engagement_7d.clicks} · {growth.engagement_7d.ctr_pct}%
+                </strong>
+                <small>
+                  {growth.engagement_7d.best_day
+                    ? `melhor dia: ${growth.engagement_7d.best_day}`
+                    : "sem melhor dia ainda"}
+                </small>
+              </article>
+              <article>
+                <span>Interesses → CRM</span>
+                <strong>{growth.conversion_7d.interests}</strong>
+                <small>
+                  {growth.conversion_7d.opportunities} oportunidades
+                </small>
+              </article>
+            </div>
+            <p style={{ whiteSpace: "pre-wrap" }}>
+              <strong>Recomendação do Gestor: </strong>
+              {growth.engagement_7d.recommendation}
+            </p>
+            <form onSubmit={logEngagement}>
+              <label>
+                Peça / post analisado
+                <input name="label" required minLength={2} />
+              </label>
+              <label>
+                Canal
+                <select name="channel" defaultValue="social">
+                  <option value="social">Social</option>
+                  <option value="email">E-mail</option>
+                  <option value="whatsapp">WhatsApp</option>
+                </select>
+              </label>
+              <label>
+                Campanha (opcional)
+                <select name="campaign_id" defaultValue="">
+                  <option value="">—</option>
+                  {campaigns.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Views
+                <input name="views" type="number" min={0} defaultValue={0} />
+              </label>
+              <label>
+                Cliques
+                <input name="clicks" type="number" min={0} defaultValue={0} />
+              </label>
+              <label>
+                Curtidas
+                <input name="likes" type="number" min={0} defaultValue={0} />
+              </label>
+              <label>
+                Comentários
+                <input name="comments" type="number" min={0} defaultValue={0} />
+              </label>
+              <label>
+                Melhor dia/horário
+                <input name="best_day" placeholder="Terça 19h" />
+              </label>
+              <label>
+                Perfil de quem engajou
+                <textarea name="audience_note" />
+              </label>
+              <button className="primary" disabled={busy} type="submit">
+                Registrar leitura de engajamento
+              </button>
+            </form>
+            {engagements.slice(0, 5).map((e) => (
+              <div className="campaign-card" key={e.id}>
+                <div>
+                  <strong>{e.label}</strong>
+                  <small>
+                    {e.channel} · {e.views} views · {e.clicks} cliques
+                  </small>
+                </div>
+                <p>{e.recommendation}</p>
+              </div>
+            ))}
+          </article>
+
+          <article className="panel">
+            <div className="panel-title">
+              <div>
+                <span>PACOTE</span>
+                <h2>
+                  {growth.package} →{" "}
+                  {growth.upgrade.recommended_package}
+                </h2>
+              </div>
+            </div>
+            <p>
+              Pacote atual: <strong>{growth.upgrade.current_package}</strong>
+            </p>
+            <ul>
+              {(growth.upgrade.packages[growth.package] || []).map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+            {growth.upgrade.reasons.map((r) => (
+              <p key={r} style={{ opacity: 0.85 }}>
+                {r}
+              </p>
+            ))}
+            {growth.upgrade.ready ? (
+              <button
+                className="primary"
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  void upgradePackage(growth.upgrade.recommended_package)
+                }
+              >
+                Aceitar upgrade para {growth.upgrade.recommended_package}
+              </button>
+            ) : (
+              <p>
+                O Gestor ainda não recomenda upgrade — avance nos critérios
+                acima.
+              </p>
+            )}
+            <strong style={{ display: "block", marginTop: 16 }}>
+              SEO / Google (atalho)
+            </strong>
+            <p style={{ opacity: 0.8 }}>
+              Marque o progresso em Governança. Resumo:
+            </p>
+            {Object.entries(SEO_LABELS).map(([key, label]) => (
+              <div key={key} className="campaign-metrics">
+                <span>
+                  {growth.seo_checklist[key] ? "✓" : "○"} {label}
+                </span>
+              </div>
+            ))}
+            <button type="button" onClick={() => setView("governance")}>
+              Abrir checklist completo
+            </button>
           </article>
         </div>
       )}

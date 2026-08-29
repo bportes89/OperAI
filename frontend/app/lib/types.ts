@@ -138,6 +138,13 @@ export type MarketingGovernance = {
     meta_business?: boolean;
     whatsapp_business?: boolean;
   };
+  seo_checklist?: {
+    google_business_profile?: boolean;
+    nap_consistent?: boolean;
+    site_basic_seo?: boolean;
+    faq_on_site?: boolean;
+    local_keywords?: boolean;
+  };
   updated_at: string | null;
 };
 
@@ -149,6 +156,45 @@ export type MarketingSpendRequest = {
   status: string;
   created_at: string | null;
   reviewed_at: string | null;
+};
+
+export type MarketingEngagement = {
+  id: string;
+  label: string;
+  channel: string;
+  campaign_id: string | null;
+  views: number;
+  clicks: number;
+  likes: number;
+  comments: number;
+  best_day: string | null;
+  audience_note: string | null;
+  recommendation: string | null;
+  created_at: string | null;
+};
+
+export type MarketingGrowth = {
+  package: string;
+  engagement_7d: {
+    entries: number;
+    views: number;
+    clicks: number;
+    likes: number;
+    comments: number;
+    ctr_pct: number;
+    best_day: string | null;
+    recommendation: string;
+  };
+  conversion_7d: { interests: number; opportunities: number };
+  seo_checklist: Record<string, boolean>;
+  upgrade: {
+    current_package: string;
+    recommended_package: string;
+    ready: boolean;
+    reasons: string[];
+    packages: Record<string, string[]>;
+  };
+  campaigns: number;
 };
 
 export type Activity = {

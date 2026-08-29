@@ -13,7 +13,7 @@ from app.core.security import create_access_token,hash_password,hash_refresh_tok
 from app.crypto import decrypt_secret,encrypt_secret
 from app.models import (
     Agent,AgentTask,AuditLog,Channel,ChannelMessage,Contact,Conversation,ConversationMessage,
-    InboxThread,KnowledgeChunk,KnowledgeDocument,LlmCredential,MarketingCampaign,MarketingGovernance,
+    InboxThread,KnowledgeChunk,KnowledgeDocument,LlmCredential,MarketingCampaign,MarketingEngagement,MarketingGovernance,
     MarketingLead,MarketingPlaybook,MarketingSpendRequest,Membership,
     Opportunity,Organization,OrganizationOnboarding,OrganizationSubscription,Receivable,
     ReceivablePayment,RefreshSession,Role,SaaSPlan,User,
@@ -22,7 +22,7 @@ from app.rag import embed_text,retrieve
 from app.schemas import (
     AgentIn,AgentQueryIn,AgentStatusIn,CampaignIn,CampaignStatusIn,ChannelIn,CheckoutIn,
     EvolutionConnectIn,IncomingMessageIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,
-    MarketingDiagnosisIn,MarketingDiscoveryIn,MarketingGovernanceIn,MarketingLeadIn,MarketingSpendIn,
+    MarketingDiagnosisIn,MarketingDiscoveryIn,MarketingEngagementIn,MarketingGovernanceIn,MarketingLeadIn,MarketingPackageIn,MarketingSpendIn,
     MarketingSpendReviewIn,OnboardingUpdateIn,OpportunityIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
     RegisterIn,TeamMemberIn,TeamMemberUpdateIn,TokenPair,
 )
@@ -843,8 +843,17 @@ DEFAULT_ACCOUNT_CHECKLIST={
     "whatsapp_business":False,
 }
 
+DEFAULT_SEO_CHECKLIST={
+    "google_business_profile":False,
+    "nap_consistent":False,
+    "site_basic_seo":False,
+    "faq_on_site":False,
+    "local_keywords":False,
+}
+
 def _gov_out(item:MarketingGovernance)->dict:
     checklist={**DEFAULT_ACCOUNT_CHECKLIST,**(item.account_checklist or {})}
+    seo={**DEFAULT_SEO_CHECKLIST,**(getattr(item,"seo_checklist",None) or {})}
     remaining=max(0,int(item.monthly_ad_ceiling_cents)-int(item.spent_cents))
     return {
         "id":str(item.id),
@@ -854,6 +863,7 @@ def _gov_out(item:MarketingGovernance)->dict:
         "crisis_escalation":bool(item.crisis_escalation),
         "lgpd_note":item.lgpd_note,
         "account_checklist":checklist,
+        "seo_checklist":seo,
         "updated_at":item.updated_at.isoformat() if item.updated_at else None,
     }
 
@@ -864,6 +874,7 @@ async def _get_or_create_governance(org_id:uuid.UUID,user_id:uuid.UUID,db:AsyncS
         organization_id=org_id,updated_by=user_id,
         monthly_ad_ceiling_cents=0,spent_cents=0,crisis_escalation=True,
         account_checklist=dict(DEFAULT_ACCOUNT_CHECKLIST),
+        seo_checklist=dict(DEFAULT_SEO_CHECKLIST),
         lgpd_note="A empresa contratante é controladora dos dados pessoais captados. A OperAI atua como processadora da plataforma.",
     )
     db.add(item);await db.commit();await db.refresh(item);return item
@@ -1033,6 +1044,11 @@ async def update_marketing_governance(data:MarketingGovernanceIn,p:Annotated[Pri
         for key in DEFAULT_ACCOUNT_CHECKLIST:
             if key in data.account_checklist:merged[key]=bool(data.account_checklist[key])
         item.account_checklist=merged
+    if data.seo_checklist is not None:
+        seo={**DEFAULT_SEO_CHECKLIST,**(item.seo_checklist or {})}
+        for key in DEFAULT_SEO_CHECKLIST:
+            if key in data.seo_checklist:seo[key]=bool(data.seo_checklist[key])
+        item.seo_checklist=seo
     item.updated_by=p.user_id;item.updated_at=datetime.now(UTC)
     db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="marketing.governance_updated",resource="marketing_governance",detail=str(item.monthly_ad_ceiling_cents)))
     await db.commit();await db.refresh(item)
@@ -1076,6 +1092,150 @@ async def review_spend_request(request_id:str,data:MarketingSpendReviewIn,p:Anno
     db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="marketing.spend_reviewed",resource="marketing_spend",detail=f"{req.id}:{data.status}"))
     await db.commit()
     return {"id":str(req.id),"status":req.status,"spent_cents":gov.spent_cents,"remaining_cents":max(0,gov.monthly_ad_ceiling_cents-gov.spent_cents)}
+
+def _engagement_recommendation(views:int,clicks:int,likes:int,comments:int,best_day:str|None)->str:
+    ctr=(clicks/views*100) if views else 0
+    parts=[]
+    if views==0 and likes==0:
+        parts.append("Registre números reais das redes para sair do achismo.")
+    elif ctr>=3:
+        parts.append("CTR forte — priorize CTAs parecidos e leve tráfego para WhatsApp/CRM.")
+    elif views>=100 and ctr<1:
+        parts.append("Alcance sem clique — revise CTA e horário de publicação.")
+    else:
+        parts.append("Mantenha cadência e teste um formato (carrossel/bastidor) na próxima semana.")
+    if comments>likes*0.3 and comments>0:
+        parts.append("Comentários aquecidos — responda rápido e registre interesses no funil.")
+    if best_day:
+        parts.append(f"Concentre 1–2 posts em {best_day}.")
+    return " ".join(parts)
+
+def _upgrade_suggestion(*,package:str,campaigns:int,leads_7d:int,engagements:int,seo:dict,ceiling:int,playbook_active:bool)->dict:
+    reasons=[]
+    recommended=package
+    if package=="essencial":
+        if playbook_active and campaigns>=2 and (leads_7d>=2 or engagements>=2):
+            recommended="crescimento"
+            reasons=[
+                "Orgânico já gera interesse ou você já mede engajamento.",
+                "Crescimento adiciona Dados/SEO para profissionalizar leitura e busca local.",
+            ]
+        else:
+            reasons=["Complete o Essencial: plano ativo, peças/campanhas e ao menos 2 interesses ou 2 leituras de engajamento."]
+    elif package=="crescimento":
+        seo_ready=sum(1 for v in seo.values() if v)>=3
+        if seo_ready and ceiling>0 and leads_7d>=3:
+            recommended="aceleracao"
+            reasons=[
+                "SEO/Google avançou e há teto de mídia — momento de testar Ads com governança.",
+                "Aceleração inclui tráfego pago sob o teto definido pelo dono.",
+            ]
+        else:
+            reasons=["Para Aceleração: avance o checklist SEO, defina teto de Ads (>0) e estabilize leads (3+ em 7 dias)."]
+    else:
+        reasons=["Pacote Aceleração ativo — foque otimização de campanhas dentro do teto."]
+    return {
+        "current_package":package,
+        "recommended_package":recommended,
+        "ready":recommended!=package,
+        "reasons":reasons,
+        "packages":{
+            "essencial":["Agente Gestor","Redação","Mídias sociais"],
+            "crescimento":["+ Design/criativo","+ SEO e conteúdo","+ Dados e análise"],
+            "aceleracao":["+ Tráfego pago (Google/Meta) sob teto"],
+        },
+    }
+
+@router.get("/marketing/engagements")
+async def list_engagements(p:Annotated[Principal,Depends(current_principal)],db:Db):
+    rows=(await db.scalars(select(MarketingEngagement).where(MarketingEngagement.organization_id==p.organization_id).order_by(MarketingEngagement.created_at.desc()).limit(40))).all()
+    return [{"id":str(x.id),"label":x.label,"channel":x.channel,"campaign_id":str(x.campaign_id) if x.campaign_id else None,"views":x.views,"clicks":x.clicks,"likes":x.likes,"comments":x.comments,"best_day":x.best_day,"audience_note":x.audience_note,"recommendation":x.recommendation,"created_at":x.created_at.isoformat() if x.created_at else None} for x in rows]
+
+@router.post("/marketing/engagements",status_code=201)
+async def create_engagement(data:MarketingEngagementIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER,Role.OPERATOR))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    campaign_uuid=None
+    if data.campaign_id:
+        campaign_uuid=parse_uuid(data.campaign_id,"Campaign")
+        if not await db.scalar(select(MarketingCampaign.id).where(and_(MarketingCampaign.id==campaign_uuid,MarketingCampaign.organization_id==p.organization_id))):
+            raise HTTPException(404,"Campaign not found")
+    rec=_engagement_recommendation(data.views,data.clicks,data.likes,data.comments,data.best_day)
+    row=MarketingEngagement(
+        organization_id=p.organization_id,created_by=p.user_id,campaign_id=campaign_uuid,
+        channel=data.channel,label=data.label[:180],views=data.views,clicks=data.clicks,
+        likes=data.likes,comments=data.comments,best_day=data.best_day,audience_note=data.audience_note,
+        recommendation=rec,
+    )
+    db.add(row)
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="marketing.engagement_logged",resource="marketing_engagement",detail=data.label[:120]))
+    await db.commit();await db.refresh(row)
+    return {"id":str(row.id),"recommendation":rec}
+
+@router.get("/marketing/growth")
+async def marketing_growth(p:Annotated[Principal,Depends(current_principal)],db:Db):
+    playbook=await _get_or_create_playbook(p,db)
+    gov=await _get_or_create_governance(p.organization_id,p.user_id,db)
+    since=datetime.now(UTC)-timedelta(days=7)
+    leads=(await db.scalars(select(MarketingLead).where(and_(MarketingLead.organization_id==p.organization_id,MarketingLead.created_at>=since)))).all()
+    engagements=(await db.scalars(select(MarketingEngagement).where(and_(MarketingEngagement.organization_id==p.organization_id,MarketingEngagement.created_at>=since)))).all()
+    campaigns=(await db.scalars(select(MarketingCampaign).where(MarketingCampaign.organization_id==p.organization_id))).all()
+    views=sum(x.views for x in engagements)
+    clicks=sum(x.clicks for x in engagements)
+    likes=sum(x.likes for x in engagements)
+    comments=sum(x.comments for x in engagements)
+    best_days=[x.best_day for x in engagements if x.best_day]
+    top_day=max(set(best_days),key=best_days.count) if best_days else None
+    latest_rec=engagements[0].recommendation if engagements else _engagement_recommendation(views,clicks,likes,comments,top_day)
+    seo={**DEFAULT_SEO_CHECKLIST,**(gov.seo_checklist or {})}
+    suggestion=_upgrade_suggestion(
+        package=playbook.package or "essencial",
+        campaigns=len(campaigns),
+        leads_7d=len(leads),
+        engagements=len(engagements),
+        seo=seo,
+        ceiling=int(gov.monthly_ad_ceiling_cents or 0),
+        playbook_active=playbook.step=="active" and bool(playbook.action_plan),
+    )
+    return {
+        "package":playbook.package,
+        "engagement_7d":{
+            "entries":len(engagements),
+            "views":views,
+            "clicks":clicks,
+            "likes":likes,
+            "comments":comments,
+            "ctr_pct":round((clicks/views*100),2) if views else 0,
+            "best_day":top_day,
+            "recommendation":latest_rec,
+        },
+        "conversion_7d":{"interests":len(leads),"opportunities":sum(1 for x in leads if x.opportunity_id)},
+        "seo_checklist":seo,
+        "upgrade":suggestion,
+        "campaigns":len(campaigns),
+    }
+
+@router.post("/marketing/playbook/upgrade")
+async def upgrade_marketing_package(data:MarketingPackageIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    playbook=await _get_or_create_playbook(p,db)
+    order={"essencial":0,"crescimento":1,"aceleracao":2}
+    if order.get(data.package,0)<order.get(playbook.package or "essencial",0):
+        raise HTTPException(409,"Downgrade de pacote não é suportado por este endpoint")
+    growth=await marketing_growth(p,db)
+    suggested=growth["upgrade"]["recommended_package"]
+    # Owner pode forçar upgrade; se não for o sugerido e pular etapas, ainda permite com audit
+    playbook.package=data.package
+    playbook.updated_at=datetime.now(UTC)
+    db.add(AgentTask(
+        organization_id=p.organization_id,agent_id=playbook.agent_id,created_by=p.user_id,
+        idempotency_key=f"playbook:{playbook.id}:pkg:{data.package}:{uuid.uuid4().hex[:6]}",
+        task_type="marketing.package_upgrade",title=f"Pacote Marketing: {data.package}",priority="normal",status="completed",
+        input_data={"from":growth["package"],"to":data.package,"suggested":suggested},
+        result_data={"ready":growth["upgrade"]["ready"]},completed_at=datetime.now(UTC),
+    ))
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="marketing.package_upgraded",resource="marketing_playbook",detail=data.package))
+    await db.commit();await db.refresh(playbook)
+    return {"package":playbook.package,"suggested":suggested,"growth":await marketing_growth(p,db)}
 
 @router.get("/analytics/overview")
 async def analytics_overview(p:Annotated[Principal,Depends(current_principal)],db:Db):

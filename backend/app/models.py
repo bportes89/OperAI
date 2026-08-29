@@ -118,6 +118,7 @@ class MarketingGovernance(Base):
     crisis_escalation:Mapped[bool]=mapped_column(Boolean,default=True)
     lgpd_note:Mapped[str|None]=mapped_column(Text)
     account_checklist:Mapped[dict]=mapped_column(JSON,default=dict)
+    seo_checklist:Mapped[dict]=mapped_column(JSON,default=dict)
     created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now())
     updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now(),onupdate=func.now())
 class MarketingSpendRequest(Base):
@@ -132,6 +133,23 @@ class MarketingSpendRequest(Base):
     status:Mapped[str]=mapped_column(String(30),default="pending")
     created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now())
     reviewed_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
+class MarketingEngagement(Base):
+    """Sprint 4: leitura de engajamento orientando o que publicar."""
+    __tablename__="marketing_engagements";__table_args__=(Index("ix_marketing_engagement_tenant_created","organization_id","created_at"),)
+    id:Mapped[uuid.UUID]=mapped_column(primary_key=True,default=uuid.uuid4)
+    organization_id:Mapped[uuid.UUID]=mapped_column(ForeignKey("organizations.id",ondelete="CASCADE"),index=True)
+    created_by:Mapped[uuid.UUID]=mapped_column(ForeignKey("users.id",ondelete="CASCADE"),index=True)
+    campaign_id:Mapped[uuid.UUID|None]=mapped_column(ForeignKey("marketing_campaigns.id",ondelete="SET NULL"),index=True)
+    channel:Mapped[str]=mapped_column(String(30),default="social")
+    label:Mapped[str]=mapped_column(String(180))
+    views:Mapped[int]=mapped_column(Integer,default=0)
+    clicks:Mapped[int]=mapped_column(Integer,default=0)
+    likes:Mapped[int]=mapped_column(Integer,default=0)
+    comments:Mapped[int]=mapped_column(Integer,default=0)
+    best_day:Mapped[str|None]=mapped_column(String(40))
+    audience_note:Mapped[str|None]=mapped_column(Text)
+    recommendation:Mapped[str|None]=mapped_column(Text)
+    created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now())
 class AuditLog(Base):
     __tablename__="audit_logs"
     id:Mapped[uuid.UUID]=mapped_column(primary_key=True,default=uuid.uuid4);organization_id:Mapped[uuid.UUID]=mapped_column(index=True);user_id:Mapped[uuid.UUID]=mapped_column(index=True);action:Mapped[str]=mapped_column(String(80));resource:Mapped[str]=mapped_column(String(120));detail:Mapped[str|None]=mapped_column(Text);created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now(),index=True)
