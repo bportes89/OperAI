@@ -1038,7 +1038,11 @@ export default function MarketingPage() {
                   <input
                     name={key}
                     type="checkbox"
-                    defaultChecked={!!governance.seo_checklist?.[key]}
+                    defaultChecked={Boolean(
+                      (governance.seo_checklist as Record<string, boolean> | undefined)?.[
+                        key
+                      ],
+                    )}
                   />
                   {label}
                 </label>
