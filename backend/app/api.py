@@ -26,7 +26,7 @@ from app.schemas import (
     EvolutionConnectIn,IncomingMessageIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,MetaConnectIn,
     MarketingDiagnosisIn,MarketingDiscoveryIn,MarketingEngagementIn,MarketingGovernanceIn,MarketingLeadIn,MarketingPackageIn,MarketingSpendIn,
     MarketingSpendReviewIn,OnboardingUpdateIn,OpportunityIn,OpportunityStageIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
-    RegisterIn,TeamMemberIn,TeamMemberUpdateIn,TokenPair,
+    FinanceSendIn,RegisterIn,TeamMemberIn,TeamMemberUpdateIn,TokenPair,
 )
 
 router=APIRouter(prefix="/api/v1")
@@ -858,8 +858,21 @@ async def queue_outgoing_message(thread_id:str,data:OutgoingMessageIn,p:Annotate
 
 @router.get("/finance/receivables")
 async def receivables(p:Annotated[Principal,Depends(current_principal)],db:Db):
-    rows=(await db.scalars(select(Receivable).where(Receivable.organization_id==p.organization_id).order_by(Receivable.due_date))).all()
-    return [{"id":str(x.id),"customer_name":x.customer_name,"description":x.description,"amount_cents":x.amount_cents,"due_date":x.due_date,"status":"overdue" if x.status=="pending" and x.due_date<date.today() else x.status,"paid_at":x.paid_at} for x in rows]
+    rows=(await db.execute(select(Receivable,Contact).outerjoin(Contact,Contact.id==Receivable.contact_id).where(Receivable.organization_id==p.organization_id).order_by(Receivable.due_date))).all()
+    out=[]
+    for x,contact in rows:
+        out.append({
+            "id":str(x.id),
+            "customer_name":x.customer_name,
+            "description":x.description,
+            "amount_cents":x.amount_cents,
+            "due_date":x.due_date,
+            "status":"overdue" if x.status=="pending" and x.due_date<date.today() else x.status,
+            "paid_at":x.paid_at,
+            "contact_id":str(x.contact_id) if x.contact_id else None,
+            "phone":contact.phone if contact else None,
+        })
+    return out
 
 @router.get("/finance/summary")
 async def finance_summary(p:Annotated[Principal,Depends(current_principal)],db:Db):
@@ -867,7 +880,8 @@ async def finance_summary(p:Annotated[Principal,Depends(current_principal)],db:D
     pending=sum(x.amount_cents for x in rows if x.status=="pending")
     overdue=sum(x.amount_cents for x in rows if x.status=="pending" and x.due_date<date.today())
     paid=sum(x.amount_cents for x in rows if x.status=="paid")
-    return {"pending_cents":pending,"overdue_cents":overdue,"paid_cents":paid,"total_count":len(rows)}
+    wa=await db.scalar(select(Channel.id).where(and_(Channel.organization_id==p.organization_id,Channel.active.is_(True),Channel.provider.in_(["meta","evolution"]))).limit(1))
+    return {"pending_cents":pending,"overdue_cents":overdue,"paid_cents":paid,"total_count":len(rows),"whatsapp_ready":bool(wa)}
 
 async def _ensure_finance_agent(org_id:uuid.UUID,user_id:uuid.UUID,db:AsyncSession)->Agent:
     agent=await db.scalar(select(Agent).where(and_(Agent.organization_id==org_id,Agent.agent_type=="finance")).order_by(Agent.created_at.asc()))
@@ -883,8 +897,61 @@ async def _ensure_finance_agent(org_id:uuid.UUID,user_id:uuid.UUID,db:AsyncSessi
         instructions=preset["instructions"] if preset else "Acompanhe cobranças com linguagem profissional. Não invente valores.",
     )
     db.add(agent);await db.flush()
-    db.add(AuditLog(organization_id=org_id,user_id=user_id,action="agent.created",resource="agent",detail=f"preset:finance"))
+    db.add(AuditLog(organization_id=org_id,user_id=user_id,action="agent.created",resource="agent",detail="preset:finance"))
     return agent
+
+def _normalize_phone(raw:str)->str:
+    digits="".join(ch for ch in raw if ch.isdigit())
+    if len(digits)<8:raise HTTPException(422,"Telefone inválido — use DDI+DDD+número (ex.: 5511999999999)")
+    return digits
+
+async def _upsert_contact_by_phone(org_id:uuid.UUID,name:str,phone:str,db:AsyncSession)->Contact:
+    phone=_normalize_phone(phone)
+    contact=await db.scalar(select(Contact).where(and_(Contact.organization_id==org_id,Contact.phone==phone)))
+    if contact:
+        if name and contact.name!=name:contact.name=name[:160]
+        return contact
+    contact=Contact(organization_id=org_id,name=name[:160],phone=phone)
+    db.add(contact);await db.flush()
+    return contact
+
+async def _pick_whatsapp_channel(org_id:uuid.UUID,db:AsyncSession)->Channel:
+    meta=await db.scalar(select(Channel).where(and_(Channel.organization_id==org_id,Channel.active.is_(True),Channel.provider=="meta")).order_by(Channel.created_at.desc()))
+    if meta:return meta
+    evo=await db.scalar(select(Channel).where(and_(Channel.organization_id==org_id,Channel.active.is_(True),Channel.provider=="evolution")).order_by(Channel.created_at.desc()))
+    if evo:return evo
+    raise HTTPException(409,"Nenhum WhatsApp pronto. Conecte Meta oficial ou Evolution em WhatsApp.")
+
+async def _dispatch_whatsapp(channel:Channel,phone:str,text:str)->None:
+    if channel.provider=="evolution":
+        if not channel.instance_name:raise HTTPException(409,"Canal Evolution sem instância")
+        await evolution.send_text(channel.instance_name,phone,text)
+        return
+    if channel.provider=="meta":
+        cfg=channel.config or {}
+        phone_number_id=str(cfg.get("phone_number_id") or channel.instance_name or "")
+        token_enc=cfg.get("access_token_encrypted")
+        if not token_enc or not phone_number_id:raise HTTPException(409,"Canal Meta sem credenciais")
+        await meta_whatsapp.send_text(phone_number_id,decrypt_secret(token_enc),phone,text)
+        return
+    raise HTTPException(409,"Este canal não envia mensagens (só recebe webhook)")
+
+async def _record_outbound_whatsapp(org_id:uuid.UUID,channel:Channel,contact:Contact,text:str,status:str,db:AsyncSession)->InboxThread:
+    thread=await db.scalar(select(InboxThread).where(and_(InboxThread.channel_id==channel.id,InboxThread.contact_id==contact.id)))
+    if not thread:
+        thread=InboxThread(organization_id=org_id,channel_id=channel.id,contact_id=contact.id)
+        db.add(thread);await db.flush()
+    thread.last_message_at=datetime.now(UTC)
+    db.add(ChannelMessage(
+        organization_id=org_id,
+        channel_id=channel.id,
+        thread_id=thread.id,
+        external_message_id=f"finance_{secrets.token_hex(10)}",
+        direction="outbound",
+        content=text,
+        status=status,
+    ))
+    return thread
 
 def _finance_follow_tone(item:Receivable)->tuple[str,str]:
     """Retorna (tone_key, instrução de tom) conforme atraso."""
@@ -959,14 +1026,26 @@ async def create_receivable(data:ReceivableIn,p:Annotated[Principal,Depends(requ
     if data.contact_id:
         contact_uuid=parse_uuid(data.contact_id,"Contact")
         if not await db.scalar(select(Contact.id).where(and_(Contact.id==contact_uuid,Contact.organization_id==p.organization_id))):raise HTTPException(404,"Contact not found")
-    item=Receivable(organization_id=p.organization_id,created_by=p.user_id,contact_id=contact_uuid,**data.model_dump(exclude={"contact_id"}))
+    elif data.phone and data.phone.strip():
+        contact=await _upsert_contact_by_phone(p.organization_id,data.customer_name,data.phone,db)
+        contact_uuid=contact.id
+    item=Receivable(
+        organization_id=p.organization_id,
+        created_by=p.user_id,
+        contact_id=contact_uuid,
+        customer_name=data.customer_name,
+        description=data.description,
+        amount_cents=data.amount_cents,
+        due_date=data.due_date,
+    )
     db.add(item);await db.flush()
     agent=await _ensure_finance_agent(p.organization_id,p.user_id,db)
     db.add_all([
         AgentTask(organization_id=p.organization_id,agent_id=agent.id,created_by=p.user_id,task_type="finance.follow_up",title=f"Acompanhar recebimento: {data.customer_name}",priority="normal",status="queued",input_data={"receivable_id":str(item.id),"amount_cents":data.amount_cents,"due_date":str(data.due_date)}),
         AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="receivable.created",resource="receivable",detail=data.customer_name),
     ])
-    await db.commit();await db.refresh(item);return {"id":str(item.id),"status":item.status}
+    await db.commit();await db.refresh(item)
+    return {"id":str(item.id),"status":item.status,"contact_id":str(item.contact_id) if item.contact_id else None}
 
 @router.post("/finance/receivables/{receivable_id}/follow-up",status_code=201)
 async def receivable_follow_up(receivable_id:str,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER,Role.OPERATOR))],db:Db):
@@ -978,6 +1057,56 @@ async def receivable_follow_up(receivable_id:str,p:Annotated[Principal,Depends(r
     result=await _generate_finance_follow_up(item,agent,p,db,force=True)
     await db.commit()
     return result
+
+@router.post("/finance/receivables/{receivable_id}/follow-up/send",status_code=201)
+async def send_receivable_follow_up(receivable_id:str,data:FinanceSendIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER,Role.OPERATOR))],db:Db):
+    """Gera (se preciso) e envia o lembrete pelo WhatsApp Meta/Evolution."""
+    await require_billing_access(p.organization_id,db)
+    item=await db.scalar(select(Receivable).where(and_(Receivable.id==parse_uuid(receivable_id,"Receivable"),Receivable.organization_id==p.organization_id)))
+    if not item:raise HTTPException(404,"Receivable not found")
+    if item.status=="paid":raise HTTPException(409,"Cobrança já está paga")
+    contact=None
+    if item.contact_id:
+        contact=await db.scalar(select(Contact).where(and_(Contact.id==item.contact_id,Contact.organization_id==p.organization_id)))
+    phone_raw=(data.phone or (contact.phone if contact else "") or "").strip()
+    if not phone_raw:
+        raise HTTPException(422,"Informe o WhatsApp do cliente (DDI+DDD+número) para enviar.")
+    contact=await _upsert_contact_by_phone(p.organization_id,item.customer_name,phone_raw,db)
+    item.contact_id=contact.id
+    agent=await _ensure_finance_agent(p.organization_id,p.user_id,db)
+    if data.message and data.message.strip():
+        draft={"message":data.message.strip(),"tone":_finance_follow_tone(item)[0],"mode":"manual","task_id":None,"receivable_id":str(item.id),"reused":False}
+    else:
+        draft=await _generate_finance_follow_up(item,agent,p,db,force=False)
+    text=str(draft.get("message") or "").strip()
+    if len(text)<5:raise HTTPException(422,"Mensagem de follow-up vazia")
+    channel=await _pick_whatsapp_channel(p.organization_id,db)
+    status="sent";error=None
+    try:
+        await _dispatch_whatsapp(channel,contact.phone,text)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        status="failed";error=str(exc)[:300]
+    thread=await _record_outbound_whatsapp(p.organization_id,channel,contact,text,status,db)
+    db.add(AuditLog(
+        organization_id=p.organization_id,user_id=p.user_id,
+        action="finance.follow_up_sent" if status=="sent" else "finance.follow_up_failed",
+        resource="receivable",
+        detail=f"{item.customer_name}:{channel.provider}:{contact.phone}",
+    ))
+    await db.commit()
+    if status!="sent":
+        raise HTTPException(502,f"Falha ao enviar no WhatsApp ({channel.provider}): {error}")
+    return {
+        **draft,
+        "sent":True,
+        "provider":channel.provider,
+        "phone":contact.phone,
+        "channel_id":str(channel.id),
+        "thread_id":str(thread.id),
+        "inbox_path":"/app/inbox",
+    }
 
 @router.post("/finance/follow-ups/run")
 async def run_finance_follow_ups(p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER))],db:Db):
@@ -1748,6 +1877,8 @@ def _human_activity(action:str,resource:str,detail:str|None)->tuple[str,str]:
         "receivable.created":("Cobrança lançada",d or "Novo recebível"),
         "receivable.paid":("Pagamento recebido",money_hint or d or "Recebimento confirmado"),
         "finance.follow_up_drafted":("Lembrete de cobrança preparado",d or "Follow-up"),
+        "finance.follow_up_sent":("Lembrete enviado no WhatsApp",d or "Cobrança"),
+        "finance.follow_up_failed":("Falha ao enviar cobrança no WhatsApp",d or "Cobrança"),
         "campaign.created":("Campanha criada",d or "Nova campanha"),
         "campaign.status_changed":("Campanha atualizada",d.replace(":"," → ") if d else "Status alterado"),
         "message.sent":("Mensagem enviada no WhatsApp",d or "Envio"),

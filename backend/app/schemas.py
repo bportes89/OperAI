@@ -81,6 +81,11 @@ class ReceivableIn(BaseModel):
     amount_cents:int=Field(gt=0)
     due_date:date
     contact_id:str|None=None
+    phone:str|None=Field(default=None,max_length=30)
+
+class FinanceSendIn(BaseModel):
+    phone:str|None=Field(default=None,min_length=8,max_length=30)
+    message:str|None=Field(default=None,min_length=5,max_length=4000)
 
 class PaymentIn(BaseModel):
     amount_cents:int=Field(gt=0)

@@ -27,12 +27,14 @@ export default function FinancePage() {
     overdue_cents: 0,
     paid_cents: 0,
     total_count: 0,
+    whatsapp_ready: false,
   });
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [draftingId, setDraftingId] = useState<string | null>(null);
-  const [lastDraft, setLastDraft] = useState<string>("");
+  const [sendingId, setSendingId] = useState<string | null>(null);
+  const [lastDraft, setLastDraft] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -60,6 +62,7 @@ export default function FinancePage() {
     setError("");
     const form = event.currentTarget;
     const data = Object.fromEntries(new FormData(form));
+    const phone = String(data.phone || "").trim();
     try {
       await apiJson("/api/v1/finance/receivables", {
         method: "POST",
@@ -68,6 +71,7 @@ export default function FinancePage() {
           description: data.description,
           amount_cents: Math.round(Number(data.amount) * 100),
           due_date: data.due_date,
+          phone: phone || null,
         }),
       });
       form.reset();
@@ -105,13 +109,50 @@ export default function FinancePage() {
       );
       setLastDraft(result.message);
       setMessage(
-        `Lembrete pronto (${TONE_LABEL[result.tone ?? ""] ?? "follow-up"}). Copie e envie no WhatsApp.`,
+        `Lembrete pronto (${TONE_LABEL[result.tone ?? ""] ?? "follow-up"}). Envie no WhatsApp ou copie.`,
       );
       await load();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setDraftingId(null);
+    }
+  }
+
+  async function sendWhatsApp(item: Receivable) {
+    setSendingId(item.id);
+    setError("");
+    setMessage("");
+    let phone = item.phone || "";
+    if (!phone) {
+      const typed = window.prompt(
+        "WhatsApp do cliente (DDI+DDD+número, ex.: 5511999999999):",
+        "",
+      );
+      if (!typed) {
+        setSendingId(null);
+        return;
+      }
+      phone = typed.trim();
+    }
+    try {
+      const result = await apiJson<{
+        message: string;
+        provider?: string;
+        phone?: string;
+      }>(`/api/v1/finance/receivables/${item.id}/follow-up/send`, {
+        method: "POST",
+        body: JSON.stringify({ phone }),
+      });
+      setLastDraft(result.message);
+      setMessage(
+        `Enviado via ${result.provider === "meta" ? "WhatsApp oficial" : "Evolution"} para ${result.phone}.`,
+      );
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSendingId(null);
     }
   }
 
@@ -152,8 +193,8 @@ export default function FinancePage() {
           <h1>Cobrança</h1>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Link className="secondary" href="/app/agents">
-            Agente Cobrança
+          <Link className="secondary" href="/app/inbox">
+            WhatsApp
           </Link>
           <button
             type="button"
@@ -167,6 +208,13 @@ export default function FinancePage() {
       </header>
       {error && <p className="error">{error}</p>}
       {message && <p className="success">{message}</p>}
+      {!summary.whatsapp_ready && (
+        <p className="pricing-note">
+          Para envio automático, conecte WhatsApp oficial (Meta) ou Evolution em{" "}
+          <Link href="/app/inbox">WhatsApp</Link>. Sem canal, ainda dá para
+          gerar e copiar o lembrete.
+        </p>
+      )}
 
       <div className="metrics">
         <article>
@@ -182,7 +230,9 @@ export default function FinancePage() {
         <article>
           <span>Recebido</span>
           <strong>{money(summary.paid_cents)}</strong>
-          <small>baixas confirmadas</small>
+          <small>
+            {summary.whatsapp_ready ? "WhatsApp pronto" : "sem canal WA"}
+          </small>
         </article>
       </div>
 
@@ -190,8 +240,8 @@ export default function FinancePage() {
         <article className="panel" style={{ marginBottom: 18 }}>
           <div className="panel-title">
             <div>
-              <span>RASCUNHO</span>
-              <h2>Último lembrete gerado</h2>
+              <span>ÚLTIMA MENSAGEM</span>
+              <h2>Lembrete de cobrança</h2>
             </div>
             <button type="button" onClick={() => void copyText(lastDraft)}>
               Copiar
@@ -212,14 +262,13 @@ export default function FinancePage() {
             </div>
           </div>
           <p style={{ marginTop: 0, opacity: 0.85, lineHeight: 1.5 }}>
-            O agente de Cobrança monta a mensagem no tom certo (lembrete →
-            atraso → negociação). Você revisa, copia e envia — sem inventar
-            valores.
+            Gere o texto no tom certo e envie no WhatsApp com um clique. A
+            conversa também aparece na Inbox.
           </p>
           {receivables.length === 0 ? (
             <div className="empty">
               <strong>Nenhuma cobrança</strong>
-              <p>Lance um recebível para acompanhar pagamentos.</p>
+              <p>Lance um recebível com WhatsApp do cliente para cobrar.</p>
             </div>
           ) : (
             receivables.map((item) => (
@@ -231,6 +280,7 @@ export default function FinancePage() {
                     {new Date(
                       item.due_date + "T12:00:00",
                     ).toLocaleDateString("pt-BR")}
+                    {item.phone ? ` · ${item.phone}` : ""}
                   </small>
                 </div>
                 <b>{money(item.amount_cents)}</b>
@@ -241,10 +291,23 @@ export default function FinancePage() {
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                     <button
                       type="button"
+                      className="primary"
+                      disabled={sendingId === item.id || !summary.whatsapp_ready}
+                      onClick={() => void sendWhatsApp(item)}
+                      title={
+                        summary.whatsapp_ready
+                          ? "Enviar lembrete no WhatsApp"
+                          : "Conecte um canal WhatsApp primeiro"
+                      }
+                    >
+                      {sendingId === item.id ? "Enviando…" : "Enviar WhatsApp"}
+                    </button>
+                    <button
+                      type="button"
                       disabled={draftingId === item.id}
                       onClick={() => void draftFollowUp(item)}
                     >
-                      {draftingId === item.id ? "Gerando…" : "Gerar lembrete"}
+                      {draftingId === item.id ? "Gerando…" : "Só gerar"}
                     </button>
                     <button type="button" onClick={() => void payReceivable(item)}>
                       Baixar via Pix
@@ -268,13 +331,16 @@ export default function FinancePage() {
               <div className="empty">
                 <strong>Nenhum lembrete ainda</strong>
                 <p>
-                  Use &quot;Gerar lembrete&quot; ou &quot;Rodar follow-ups&quot;
-                  para títulos próximos do vencimento / atrasados.
+                  Use &quot;Enviar WhatsApp&quot; ou &quot;Rodar follow-ups&quot;.
                 </p>
               </div>
             ) : (
               followUps.slice(0, 8).map((fu) => (
-                <div className="activity-row" key={fu.id} style={{ alignItems: "start" }}>
+                <div
+                  className="activity-row"
+                  key={fu.id}
+                  style={{ alignItems: "start" }}
+                >
                   <div className="activity-dot" />
                   <div>
                     <strong>
@@ -313,6 +379,14 @@ export default function FinancePage() {
               <label>
                 Cliente
                 <input name="customer_name" required minLength={2} />
+              </label>
+              <label>
+                WhatsApp (opcional)
+                <input
+                  name="phone"
+                  placeholder="5511999999999"
+                  pattern="[0-9+\s()-]{8,30}"
+                />
               </label>
               <label>
                 Descrição

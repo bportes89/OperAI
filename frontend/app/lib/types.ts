@@ -89,6 +89,8 @@ export type Receivable = {
   due_date: string;
   status: string;
   paid_at: string | null;
+  contact_id?: string | null;
+  phone?: string | null;
 };
 
 export type FinanceSummary = {
@@ -96,6 +98,7 @@ export type FinanceSummary = {
   overdue_cents: number;
   paid_cents: number;
   total_count: number;
+  whatsapp_ready?: boolean;
 };
 
 export type FinanceFollowUp = {
