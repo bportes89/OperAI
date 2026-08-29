@@ -26,8 +26,10 @@ const CHANNEL_LABEL: Record<string, string> = {
 export default function CrmPage() {
   const [items, setItems] = useState<Opportunity[]>([]);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -42,10 +44,13 @@ export default function CrmPage() {
     void load();
   }, [load]);
 
+  const editing = items.find((i) => i.id === editingId) ?? null;
+
   async function createOpportunity(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError("");
+    setMessage("");
     const form = event.currentTarget;
     const data = Object.fromEntries(new FormData(form));
     try {
@@ -61,7 +66,66 @@ export default function CrmPage() {
         }),
       });
       form.reset();
+      setMessage("Oportunidade adicionada ao pipeline.");
       await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveOpportunity(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingId) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    const data = Object.fromEntries(new FormData(event.currentTarget));
+    try {
+      const updated = await apiJson<Opportunity>(
+        `/api/v1/opportunities/${editingId}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            company: data.company,
+            contact: data.contact,
+            stage: data.stage,
+            value_cents: Math.round(Number(data.value) * 100),
+            source_channel: data.source_channel || null,
+            source_title: data.source_title || null,
+          }),
+        },
+      );
+      setItems((prev) =>
+        prev.map((i) => (i.id === updated.id ? { ...i, ...updated } : i)),
+      );
+      setMessage(`“${updated.company}” atualizada.`);
+      setEditingId(null);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeOpportunity() {
+    if (!editingId || !editing) return;
+    if (
+      !window.confirm(
+        `Remover “${editing.company}” do pipeline? Esta ação não desfaz.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await apiJson(`/api/v1/opportunities/${editingId}`, { method: "DELETE" });
+      setItems((prev) => prev.filter((i) => i.id !== editingId));
+      setMessage(`“${editing.company}” removida.`);
+      setEditingId(null);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -80,7 +144,9 @@ export default function CrmPage() {
         `/api/v1/opportunities/${id}/stage`,
         { method: "PATCH", body: JSON.stringify({ stage }) },
       );
-      setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...updated } : i)));
+      setItems((prev) =>
+        prev.map((i) => (i.id === id ? { ...i, ...updated } : i)),
+      );
     } catch (e) {
       setError((e as Error).message);
       await load();
@@ -121,6 +187,7 @@ export default function CrmPage() {
         </Link>
       </header>
       {error && <p className="error">{error}</p>}
+      {message && <p className="success">{message}</p>}
 
       <div className="metrics">
         <article>
@@ -153,8 +220,8 @@ export default function CrmPage() {
           </button>
         </div>
         <p style={{ marginTop: 0, opacity: 0.85, lineHeight: 1.5 }}>
-          Arraste o card entre colunas ou use os botões de etapa. Interesses do
-          Marketing entram em <strong>Novos</strong> com a origem da peça.
+          Arraste o card entre colunas, mude a etapa pelos botões ou abra{" "}
+          <strong>Editar</strong> para alterar valor, contato e origem.
         </p>
         {items.length === 0 ? (
           <div className="empty">
@@ -191,7 +258,7 @@ export default function CrmPage() {
                     return (
                       <div
                         key={item.id}
-                        className={`kanban-card${draggingId === item.id ? " dragging" : ""}`}
+                        className={`kanban-card${draggingId === item.id ? " dragging" : ""}${editingId === item.id ? " selected" : ""}`}
                         draggable
                         onDragStart={(e) => {
                           e.dataTransfer.setData("text/opportunity-id", item.id);
@@ -209,11 +276,25 @@ export default function CrmPage() {
                           </span>
                         )}
                         <div className="kanban-move">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingId(item.id);
+                              setMessage("");
+                              setError("");
+                            }}
+                          >
+                            Editar
+                          </button>
                           {STAGES.filter((s) => s.id !== item.stage).map((s) => (
                             <button
                               key={s.id}
                               type="button"
-                              onClick={() => void moveStage(item.id, s.id)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void moveStage(item.id, s.id);
+                              }}
                             >
                               {s.label}
                             </button>
@@ -228,6 +309,100 @@ export default function CrmPage() {
           </div>
         )}
       </article>
+
+      {editing && (
+        <article className="panel" id="edit-opportunity" style={{ marginBottom: 18 }}>
+          <div className="panel-title">
+            <div>
+              <span>EDITAR</span>
+              <h2>{editing.company}</h2>
+            </div>
+            <button type="button" onClick={() => setEditingId(null)}>
+              Fechar
+            </button>
+          </div>
+          <form
+            key={editing.id}
+            onSubmit={saveOpportunity}
+            className="crm-create-form"
+          >
+            <label>
+              Empresa
+              <input
+                name="company"
+                required
+                minLength={2}
+                defaultValue={editing.company}
+              />
+            </label>
+            <label>
+              Contato
+              <input
+                name="contact"
+                required
+                minLength={2}
+                defaultValue={editing.contact}
+              />
+            </label>
+            <label>
+              Etapa
+              <select name="stage" defaultValue={editing.stage}>
+                {STAGES.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Valor (R$)
+              <input
+                name="value"
+                type="number"
+                min="0"
+                step="0.01"
+                required
+                defaultValue={(editing.value_cents / 100).toFixed(2)}
+              />
+            </label>
+            <label>
+              Origem
+              <select
+                name="source_channel"
+                defaultValue={editing.source_channel || ""}
+              >
+                <option value="">Manual / sem origem</option>
+                <option value="social">Rede social</option>
+                <option value="whatsapp">WhatsApp</option>
+                <option value="email">E-mail</option>
+                <option value="google">Google</option>
+                <option value="ads">Anúncio</option>
+                <option value="other">Outro</option>
+              </select>
+            </label>
+            <label>
+              Peça / campanha
+              <input
+                name="source_title"
+                defaultValue={editing.source_title || ""}
+                placeholder="Ex.: Post Convite WhatsApp"
+              />
+            </label>
+            <div className="proposal-actions" style={{ flexWrap: "wrap" }}>
+              <button className="primary" disabled={busy} type="submit">
+                {busy ? "Salvando…" : "Salvar alterações"}
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void removeOpportunity()}
+              >
+                Remover do pipeline
+              </button>
+            </div>
+          </form>
+        </article>
+      )}
 
       <article className="panel">
         <div className="panel-title">

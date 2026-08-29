@@ -133,6 +133,11 @@ body:has(.app-shell) .workspace {
   border-color: #2c2c31;
 }
 
+.app-shell .kanban-card.selected {
+  outline: 2px solid #3dd68c;
+  outline-offset: 1px;
+}
+
 .app-shell .kanban-card small {
   color: #8b8b93;
 }

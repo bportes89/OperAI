@@ -163,6 +163,10 @@
 .kanban-card.dragging {
   opacity: 0.55;
 }
+.kanban-card.selected {
+  outline: 2px solid var(--teal, #1a5f4a);
+  outline-offset: 1px;
+}
 .kanban-card strong {
   font-size: 13px;
 }

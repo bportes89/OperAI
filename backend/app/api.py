@@ -25,7 +25,7 @@ from app.schemas import (
     AgentFromPresetIn,AgentIn,AgentQueryIn,AgentStatusIn,BrandKitIn,CampaignIn,CampaignSpendRequestIn,CampaignStatusIn,ChannelIn,CheckoutIn,
     EvolutionConnectIn,IncomingMessageIn,InboxThreadStatusIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,MetaConnectIn,
     MarketingDiagnosisIn,MarketingDiscoveryIn,MarketingEngagementIn,MarketingGovernanceIn,MarketingLeadIn,MarketingPackageIn,MarketingSpendIn,
-    MarketingSpendReviewIn,OnboardingUpdateIn,OpportunityIn,OpportunityStageIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
+    MarketingSpendReviewIn,OnboardingUpdateIn,OpportunityIn,OpportunityStageIn,OpportunityUpdateIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
     FinanceSendIn,RegisterIn,TeamMemberIn,TeamMemberUpdateIn,TemplateSendIn,TokenPair,
 )
 
@@ -517,6 +517,42 @@ async def change_opportunity_stage(opportunity_id:str,data:OpportunityStageIn,p:
     db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="opportunity.stage_changed",resource="opportunity",detail=f"{item.company}:{prev}:{data.stage}"))
     await db.commit();await db.refresh(item)
     return _opportunity_out(item)
+
+@router.patch("/opportunities/{opportunity_id}")
+async def update_opportunity(opportunity_id:str,data:OpportunityUpdateIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER,Role.OPERATOR))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    item=await db.scalar(select(Opportunity).where(and_(Opportunity.id==parse_uuid(opportunity_id,"Opportunity"),Opportunity.organization_id==p.organization_id)))
+    if not item:raise HTTPException(404,"Opportunity not found")
+    payload=data.model_dump(exclude_unset=True)
+    if not payload:raise HTTPException(422,"Nada para atualizar")
+    prev_stage=item.stage
+    if "company" in payload and payload["company"] is not None:item.company=payload["company"].strip()
+    if "contact" in payload and payload["contact"] is not None:item.contact=payload["contact"].strip()
+    if "value_cents" in payload and payload["value_cents"] is not None:item.value_cents=payload["value_cents"]
+    if "stage" in payload and payload["stage"] is not None:item.stage=payload["stage"]
+    if "source_title" in payload:item.source_title=(payload["source_title"] or "").strip() or None
+    if "source_channel" in payload:item.source_channel=(payload["source_channel"] or "").strip() or None
+    detail=item.company
+    if "stage" in payload and payload["stage"] and payload["stage"]!=prev_stage:
+        db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="opportunity.stage_changed",resource="opportunity",detail=f"{item.company}:{prev_stage}:{item.stage}"))
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="opportunity.updated",resource="opportunity",detail=detail))
+    await db.commit();await db.refresh(item)
+    return _opportunity_out(item)
+
+@router.delete("/opportunities/{opportunity_id}",status_code=204)
+async def delete_opportunity(opportunity_id:str,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    item=await db.scalar(select(Opportunity).where(and_(Opportunity.id==parse_uuid(opportunity_id,"Opportunity"),Opportunity.organization_id==p.organization_id)))
+    if not item:raise HTTPException(404,"Opportunity not found")
+    company=item.company
+    # Desvincula leads de marketing que apontam para esta oportunidade
+    leads=(await db.scalars(select(MarketingLead).where(and_(MarketingLead.organization_id==p.organization_id,MarketingLead.opportunity_id==item.id)))).all()
+    for lead in leads:
+        lead.opportunity_id=None
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="opportunity.deleted",resource="opportunity",detail=company))
+    await db.delete(item)
+    await db.commit()
+    return None
 
 def _agent_out(x:Agent)->dict:
     return {"id":str(x.id),"name":x.name,"agent_type":x.agent_type,"status":x.status,"model":x.model,"instructions":x.instructions}
@@ -2197,6 +2233,8 @@ def _human_activity(action:str,resource:str,detail:str|None)->tuple[str,str]:
     labels={
         "opportunity.created":("Nova oportunidade no CRM",d or "Negócio registrado"),
         "opportunity.stage_changed":("Etapa do CRM atualizada",d.replace(":"," → ") if d else "Kanban"),
+        "opportunity.updated":("Oportunidade editada no CRM",d or "Dados atualizados"),
+        "opportunity.deleted":("Oportunidade removida do CRM",d or "Removida"),
         "agent.created":("Agente adicionado à equipe",d or "Novo agente"),
         "agent.status_changed":("Status de agente atualizado",d.replace(":"," → ") if d else "Alteração de status"),
         "agent.queried":("Consulta a um agente",d or "Pergunta respondida"),

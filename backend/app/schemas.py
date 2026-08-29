@@ -32,6 +32,14 @@ class OpportunityIn(BaseModel):
 class OpportunityStageIn(BaseModel):
     stage:str=Field(pattern=r"^(new|qualified|proposal|won|lost)$")
 
+class OpportunityUpdateIn(BaseModel):
+    company:str|None=Field(default=None,min_length=2,max_length=160)
+    contact:str|None=Field(default=None,min_length=2,max_length=160)
+    stage:str|None=Field(default=None,pattern=r"^(new|qualified|proposal|won|lost)$")
+    value_cents:int|None=Field(default=None,ge=0)
+    source_title:str|None=Field(default=None,max_length=180)
+    source_channel:str|None=Field(default=None,max_length=40)
+
 class InboxThreadStatusIn(BaseModel):
     status:str=Field(pattern=r"^(open|human|closed)$")
 
