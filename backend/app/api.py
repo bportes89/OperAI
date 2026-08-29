@@ -13,7 +13,8 @@ from app.core.security import create_access_token,hash_password,hash_refresh_tok
 from app.crypto import decrypt_secret,encrypt_secret
 from app.models import (
     Agent,AgentTask,AuditLog,Channel,ChannelMessage,Contact,Conversation,ConversationMessage,
-    InboxThread,KnowledgeChunk,KnowledgeDocument,LlmCredential,MarketingCampaign,MarketingLead,MarketingPlaybook,Membership,
+    InboxThread,KnowledgeChunk,KnowledgeDocument,LlmCredential,MarketingCampaign,MarketingGovernance,
+    MarketingLead,MarketingPlaybook,MarketingSpendRequest,Membership,
     Opportunity,Organization,OrganizationOnboarding,OrganizationSubscription,Receivable,
     ReceivablePayment,RefreshSession,Role,SaaSPlan,User,
 )
@@ -21,7 +22,8 @@ from app.rag import embed_text,retrieve
 from app.schemas import (
     AgentIn,AgentQueryIn,AgentStatusIn,CampaignIn,CampaignStatusIn,ChannelIn,CheckoutIn,
     EvolutionConnectIn,IncomingMessageIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,
-    MarketingDiagnosisIn,MarketingDiscoveryIn,MarketingLeadIn,OnboardingUpdateIn,OpportunityIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
+    MarketingDiagnosisIn,MarketingDiscoveryIn,MarketingGovernanceIn,MarketingLeadIn,MarketingSpendIn,
+    MarketingSpendReviewIn,OnboardingUpdateIn,OpportunityIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
     RegisterIn,TeamMemberIn,TeamMemberUpdateIn,TokenPair,
 )
 
@@ -829,8 +831,42 @@ def _lead_out(item:MarketingLead)->dict:
         "campaign_id":str(item.campaign_id) if item.campaign_id else None,
         "contact_id":str(item.contact_id) if item.contact_id else None,
         "opportunity_id":str(item.opportunity_id) if item.opportunity_id else None,
+        "consent_lgpd":bool(item.consent_lgpd),
+        "consent_at":item.consent_at.isoformat() if item.consent_at else None,
+        "is_crisis":bool(item.is_crisis),
         "created_at":item.created_at.isoformat() if item.created_at else None,
     }
+
+DEFAULT_ACCOUNT_CHECKLIST={
+    "google_business":False,
+    "meta_business":False,
+    "whatsapp_business":False,
+}
+
+def _gov_out(item:MarketingGovernance)->dict:
+    checklist={**DEFAULT_ACCOUNT_CHECKLIST,**(item.account_checklist or {})}
+    remaining=max(0,int(item.monthly_ad_ceiling_cents)-int(item.spent_cents))
+    return {
+        "id":str(item.id),
+        "monthly_ad_ceiling_cents":item.monthly_ad_ceiling_cents,
+        "spent_cents":item.spent_cents,
+        "remaining_cents":remaining,
+        "crisis_escalation":bool(item.crisis_escalation),
+        "lgpd_note":item.lgpd_note,
+        "account_checklist":checklist,
+        "updated_at":item.updated_at.isoformat() if item.updated_at else None,
+    }
+
+async def _get_or_create_governance(org_id:uuid.UUID,user_id:uuid.UUID,db:AsyncSession)->MarketingGovernance:
+    item=await db.scalar(select(MarketingGovernance).where(MarketingGovernance.organization_id==org_id))
+    if item:return item
+    item=MarketingGovernance(
+        organization_id=org_id,updated_by=user_id,
+        monthly_ad_ceiling_cents=0,spent_cents=0,crisis_escalation=True,
+        account_checklist=dict(DEFAULT_ACCOUNT_CHECKLIST),
+        lgpd_note="A empresa contratante é controladora dos dados pessoais captados. A OperAI atua como processadora da plataforma.",
+    )
+    db.add(item);await db.commit();await db.refresh(item);return item
 
 @router.get("/marketing/leads")
 async def list_marketing_leads(p:Annotated[Principal,Depends(current_principal)],db:Db):
@@ -848,6 +884,7 @@ async def marketing_conversion_stats(p:Annotated[Principal,Depends(current_princ
         "interests":len(rows),
         "leads_with_contact":with_contact,
         "opportunities":with_opp,
+        "crisis":sum(1 for x in rows if x.is_crisis),
         "by_channel":{
             "social":sum(1 for x in rows if x.source_channel=="social"),
             "email":sum(1 for x in rows if x.source_channel=="email"),
@@ -858,9 +895,11 @@ async def marketing_conversion_stats(p:Annotated[Principal,Depends(current_princ
 @router.post("/marketing/leads",status_code=201)
 async def create_marketing_lead(data:MarketingLeadIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER,Role.OPERATOR))],db:Db):
     await require_billing_access(p.organization_id,db)
+    if not data.consent_lgpd:raise HTTPException(422,"Consentimento LGPD é obrigatório para captar o lead")
     phone=_normalize_phone(data.phone)
     email=(data.email or "").strip().lower() or None
     if not phone and not email:raise HTTPException(422,"Informe telefone ou e-mail do interessado")
+    gov=await _get_or_create_governance(p.organization_id,p.user_id,db)
     campaign_uuid=None
     if data.campaign_id:
         campaign_uuid=parse_uuid(data.campaign_id,"Campaign")
@@ -873,7 +912,6 @@ async def create_marketing_lead(data:MarketingLeadIn,p:Annotated[Principal,Depen
     if phone:
         contact=await db.scalar(select(Contact).where(and_(Contact.organization_id==p.organization_id,Contact.phone==phone)))
     if not contact:
-        # Contact.phone is required+unique — use real phone or stable synthetic key for email-only leads
         contact_phone=phone or f"mkt:{email}"[:30]
         existing=await db.scalar(select(Contact).where(and_(Contact.organization_id==p.organization_id,Contact.phone==contact_phone)))
         if existing:
@@ -893,6 +931,8 @@ async def create_marketing_lead(data:MarketingLeadIn,p:Annotated[Principal,Depen
     )
     db.add(opportunity);await db.flush()
 
+    now=datetime.now(UTC)
+    crisis=bool(data.is_crisis) and bool(gov.crisis_escalation)
     lead=MarketingLead(
         organization_id=p.organization_id,
         created_by=p.user_id,
@@ -905,7 +945,10 @@ async def create_marketing_lead(data:MarketingLeadIn,p:Annotated[Principal,Depen
         phone=phone,
         email=email,
         note=data.note,
-        status="handed_off",
+        status="escalated" if crisis else "handed_off",
+        consent_lgpd=True,
+        consent_at=now,
+        is_crisis=crisis,
     )
     db.add(lead);await db.flush()
 
@@ -917,11 +960,11 @@ async def create_marketing_lead(data:MarketingLeadIn,p:Annotated[Principal,Depen
 
     db.add(AgentTask(
         organization_id=p.organization_id,
-        agent_id=handoff_agent.id if handoff_agent else None,
+        agent_id=None if crisis else (handoff_agent.id if handoff_agent else None),
         created_by=p.user_id,
         idempotency_key=f"mkt-lead:{lead.id}",
-        task_type="marketing.handoff",
-        title=f"Lead: {data.contact_name[:80]}",
+        task_type="marketing.crisis" if crisis else "marketing.handoff",
+        title=("CRISE: " if crisis else "Lead: ")+data.contact_name[:70],
         priority="high",
         status="queued",
         input_data={
@@ -933,12 +976,15 @@ async def create_marketing_lead(data:MarketingLeadIn,p:Annotated[Principal,Depen
             "phone":phone,
             "email":email,
             "note":data.note,
-            "next_step":"Qualificar no CRM e seguir no WhatsApp/comercial",
+            "consent_lgpd":True,
+            "is_crisis":crisis,
+            "next_step":"Escalar para humano — não responder automaticamente" if crisis else "Qualificar no CRM e seguir no WhatsApp/comercial",
         },
     ))
     db.add(AuditLog(
         organization_id=p.organization_id,user_id=p.user_id,
-        action="marketing.lead_handed_off",resource="marketing_lead",
+        action="marketing.crisis_escalated" if crisis else "marketing.lead_handed_off",
+        resource="marketing_lead",
         detail=f"{data.source_title}:{data.contact_name}",
     ))
     await db.commit();await db.refresh(lead)
@@ -947,11 +993,89 @@ async def create_marketing_lead(data:MarketingLeadIn,p:Annotated[Principal,Depen
         "handoff":{
             "contact_id":str(contact.id),
             "opportunity_id":str(opportunity.id),
-            "agent_id":str(handoff_agent.id) if handoff_agent else None,
+            "agent_id":None if crisis else (str(handoff_agent.id) if handoff_agent else None),
+            "human_required":crisis,
             "crm_path":"/app/crm",
             "inbox_path":"/app/inbox",
         },
     }
+
+@router.post("/marketing/leads/{lead_id}/escalate")
+async def escalate_marketing_lead(lead_id:str,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER,Role.OPERATOR))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    lead=await db.scalar(select(MarketingLead).where(and_(MarketingLead.id==parse_uuid(lead_id,"Lead"),MarketingLead.organization_id==p.organization_id)))
+    if not lead:raise HTTPException(404,"Lead not found")
+    lead.is_crisis=True;lead.status="escalated"
+    db.add(AgentTask(
+        organization_id=p.organization_id,agent_id=None,created_by=p.user_id,
+        idempotency_key=f"mkt-crisis:{lead.id}:{uuid.uuid4().hex[:6]}",
+        task_type="marketing.crisis",title=f"CRISE: {lead.contact_name[:70]}",priority="high",status="queued",
+        input_data={"lead_id":str(lead.id),"note":lead.note,"next_step":"Resposta humana obrigatória"},
+    ))
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="marketing.crisis_escalated",resource="marketing_lead",detail=lead.contact_name))
+    await db.commit();await db.refresh(lead)
+    return _lead_out(lead)
+
+@router.get("/marketing/governance")
+async def get_marketing_governance(p:Annotated[Principal,Depends(current_principal)],db:Db):
+    item=await _get_or_create_governance(p.organization_id,p.user_id,db)
+    return _gov_out(item)
+
+@router.put("/marketing/governance")
+async def update_marketing_governance(data:MarketingGovernanceIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    item=await _get_or_create_governance(p.organization_id,p.user_id,db)
+    if data.monthly_ad_ceiling_cents is not None:item.monthly_ad_ceiling_cents=data.monthly_ad_ceiling_cents
+    if data.crisis_escalation is not None:item.crisis_escalation=data.crisis_escalation
+    if data.lgpd_note is not None:item.lgpd_note=data.lgpd_note
+    if data.account_checklist is not None:
+        merged={**DEFAULT_ACCOUNT_CHECKLIST,**(item.account_checklist or {})}
+        for key in DEFAULT_ACCOUNT_CHECKLIST:
+            if key in data.account_checklist:merged[key]=bool(data.account_checklist[key])
+        item.account_checklist=merged
+    item.updated_by=p.user_id;item.updated_at=datetime.now(UTC)
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="marketing.governance_updated",resource="marketing_governance",detail=str(item.monthly_ad_ceiling_cents)))
+    await db.commit();await db.refresh(item)
+    return _gov_out(item)
+
+@router.get("/marketing/spend-requests")
+async def list_spend_requests(p:Annotated[Principal,Depends(current_principal)],db:Db):
+    rows=(await db.scalars(select(MarketingSpendRequest).where(MarketingSpendRequest.organization_id==p.organization_id).order_by(MarketingSpendRequest.created_at.desc()).limit(50))).all()
+    return [{"id":str(x.id),"channel":x.channel,"description":x.description,"amount_cents":x.amount_cents,"status":x.status,"created_at":x.created_at.isoformat() if x.created_at else None,"reviewed_at":x.reviewed_at.isoformat() if x.reviewed_at else None} for x in rows]
+
+@router.post("/marketing/spend-requests",status_code=201)
+async def create_spend_request(data:MarketingSpendIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    gov=await _get_or_create_governance(p.organization_id,p.user_id,db)
+    remaining=max(0,gov.monthly_ad_ceiling_cents-gov.spent_cents)
+    # Dentro do teto: aprovado automaticamente (ainda é gasto rastreado). Acima do teto: pending até o dono.
+    needs_approval=data.amount_cents>remaining
+    status="pending" if needs_approval else "approved"
+    req=MarketingSpendRequest(
+        organization_id=p.organization_id,created_by=p.user_id,
+        channel=data.channel,description=data.description,amount_cents=data.amount_cents,status=status,
+    )
+    if status=="approved":
+        gov.spent_cents=int(gov.spent_cents)+data.amount_cents
+        req.reviewed_by=p.user_id;req.reviewed_at=datetime.now(UTC)
+    db.add(req)
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="marketing.spend_requested",resource="marketing_spend",detail=f"{status}:{data.amount_cents}"))
+    await db.commit();await db.refresh(req)
+    return {"id":str(req.id),"status":req.status,"needs_owner_approval":needs_approval,"remaining_cents":max(0,gov.monthly_ad_ceiling_cents-gov.spent_cents)}
+
+@router.patch("/marketing/spend-requests/{request_id}")
+async def review_spend_request(request_id:str,data:MarketingSpendReviewIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN))],db:Db):
+    await require_billing_access(p.organization_id,db)
+    req=await db.scalar(select(MarketingSpendRequest).where(and_(MarketingSpendRequest.id==parse_uuid(request_id,"Spend"),MarketingSpendRequest.organization_id==p.organization_id)))
+    if not req:raise HTTPException(404,"Spend request not found")
+    if req.status!="pending":raise HTTPException(409,"Request already reviewed")
+    gov=await _get_or_create_governance(p.organization_id,p.user_id,db)
+    req.status=data.status;req.reviewed_by=p.user_id;req.reviewed_at=datetime.now(UTC)
+    if data.status=="approved":
+        gov.spent_cents=int(gov.spent_cents)+int(req.amount_cents)
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="marketing.spend_reviewed",resource="marketing_spend",detail=f"{req.id}:{data.status}"))
+    await db.commit()
+    return {"id":str(req.id),"status":req.status,"spent_cents":gov.spent_cents,"remaining_cents":max(0,gov.monthly_ad_ceiling_cents-gov.spent_cents)}
 
 @router.get("/analytics/overview")
 async def analytics_overview(p:Annotated[Principal,Depends(current_principal)],db:Db):

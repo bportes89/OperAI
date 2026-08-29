@@ -8,10 +8,13 @@ import {
   CAMPAIGN_TRANSITIONS,
   type Campaign,
   type MarketingConversion,
+  type MarketingGovernance,
   type MarketingLead,
   type MarketingPlaybook,
   type MarketingPost,
+  type MarketingSpendRequest,
 } from "../../lib/types";
+import { money } from "../../lib/format";
 
 const WIZARD_STEPS = [
   { key: "diagnosis", label: "1. Diagnóstico" },
@@ -30,26 +33,32 @@ export default function MarketingPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [leads, setLeads] = useState<MarketingLead[]>([]);
   const [conversion, setConversion] = useState<MarketingConversion | null>(null);
+  const [governance, setGovernance] = useState<MarketingGovernance | null>(null);
+  const [spends, setSpends] = useState<MarketingSpendRequest[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState<"wizard" | "campaigns" | "conversion">(
-    "wizard",
-  );
+  const [view, setView] = useState<
+    "wizard" | "campaigns" | "conversion" | "governance"
+  >("wizard");
   const [interestFor, setInterestFor] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       setError("");
-      const [pb, cams, leadRows, conv] = await Promise.all([
+      const [pb, cams, leadRows, conv, gov, spendRows] = await Promise.all([
         apiJson<MarketingPlaybook>("/api/v1/marketing/playbook"),
         apiJson<Campaign[]>("/api/v1/marketing/campaigns"),
         apiJson<MarketingLead[]>("/api/v1/marketing/leads"),
         apiJson<MarketingConversion>("/api/v1/marketing/conversion"),
+        apiJson<MarketingGovernance>("/api/v1/marketing/governance"),
+        apiJson<MarketingSpendRequest[]>("/api/v1/marketing/spend-requests"),
       ]);
       setPlaybook(pb);
       setCampaigns(cams);
       setLeads(leadRows);
       setConversion(conv);
+      setGovernance(gov);
+      setSpends(spendRows);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -187,6 +196,8 @@ export default function MarketingPage() {
           source_channel: source.channel,
           campaign_id: source.campaignId || null,
           value_cents: Math.round(Number(data.value || 0) * 100),
+          consent_lgpd: data.consent_lgpd === "on",
+          is_crisis: data.is_crisis === "on",
         }),
       });
       form.reset();
@@ -240,6 +251,15 @@ export default function MarketingPage() {
           Nota / contexto do interesse
           <textarea name="note" placeholder="Comentou no post, pediu orçamento…" />
         </label>
+        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input name="consent_lgpd" type="checkbox" required />
+          Consentimento LGPD: o interessado autorizou o tratamento dos dados
+          para contato comercial
+        </label>
+        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input name="is_crisis" type="checkbox" />
+          Situação sensível / crise — escalar para humano (sem resposta automática)
+        </label>
         <div className="proposal-actions">
           <button className="primary" disabled={busy} type="submit">
             Criar lead e passar ao comercial
@@ -250,6 +270,95 @@ export default function MarketingPage() {
         </div>
       </form>
     );
+  }
+
+  async function saveGovernance(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    const form = event.currentTarget;
+    const data = Object.fromEntries(new FormData(form));
+    try {
+      const gov = await apiJson<MarketingGovernance>(
+        "/api/v1/marketing/governance",
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            monthly_ad_ceiling_cents: Math.round(
+              Number(data.ceiling_reais || 0) * 100,
+            ),
+            crisis_escalation: data.crisis_escalation === "on",
+            lgpd_note: data.lgpd_note || null,
+            account_checklist: {
+              google_business: data.google_business === "on",
+              meta_business: data.meta_business === "on",
+              whatsapp_business: data.whatsapp_business === "on",
+            },
+          }),
+        },
+      );
+      setGovernance(gov);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function requestSpend(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    const form = event.currentTarget;
+    const data = Object.fromEntries(new FormData(form));
+    try {
+      await apiJson("/api/v1/marketing/spend-requests", {
+        method: "POST",
+        body: JSON.stringify({
+          channel: data.channel,
+          description: data.description,
+          amount_cents: Math.round(Number(data.amount || 0) * 100),
+        }),
+      });
+      form.reset();
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reviewSpend(id: string, status: "approved" | "rejected") {
+    setBusy(true);
+    setError("");
+    try {
+      await apiJson(`/api/v1/marketing/spend-requests/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      });
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function escalateLead(id: string) {
+    setBusy(true);
+    setError("");
+    try {
+      await apiJson(`/api/v1/marketing/leads/${id}/escalate`, {
+        method: "POST",
+        body: "{}",
+      });
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   const step = playbook?.step ?? "diagnosis";
@@ -285,6 +394,13 @@ export default function MarketingPage() {
             onClick={() => setView("conversion")}
           >
             Conversão
+          </button>
+          <button
+            type="button"
+            className={view === "governance" ? "primary" : undefined}
+            onClick={() => setView("governance")}
+          >
+            Governança
           </button>
         </div>
       </header>
@@ -729,11 +845,187 @@ export default function MarketingPage() {
                       Oportunidade: {lead.opportunity_id ? "sim" : "não"}
                     </span>
                     <span>
+                      LGPD: {lead.consent_lgpd ? "ok" : "—"}
+                    </span>
+                    <span>
                       {lead.created_at
                         ? new Date(lead.created_at).toLocaleString("pt-BR")
                         : ""}
                     </span>
                   </div>
+                  {!lead.is_crisis && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void escalateLead(lead.id)}
+                    >
+                      Escalar crise → humano
+                    </button>
+                  )}
+                </div>
+              ))
+            )}
+          </article>
+        </div>
+      )}
+
+      {view === "governance" && governance && (
+        <div className="content-grid">
+          <article className="panel">
+            <div className="panel-title">
+              <div>
+                <span>CONTROLE</span>
+                <h2>Teto de mídia, LGPD e contas</h2>
+              </div>
+            </div>
+            <div className="metrics" style={{ marginBottom: 16 }}>
+              <article>
+                <span>Teto mensal Ads</span>
+                <strong>{money(governance.monthly_ad_ceiling_cents)}</strong>
+                <small>Google/Meta — separado da mensalidade</small>
+              </article>
+              <article>
+                <span>Já consumido</span>
+                <strong>{money(governance.spent_cents)}</strong>
+                <small>restam {money(governance.remaining_cents)}</small>
+              </article>
+            </div>
+            <form onSubmit={saveGovernance}>
+              <label>
+                Teto mensal de mídia paga (R$)
+                <input
+                  name="ceiling_reais"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  defaultValue={(
+                    governance.monthly_ad_ceiling_cents / 100
+                  ).toFixed(2)}
+                />
+              </label>
+              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  name="crisis_escalation"
+                  type="checkbox"
+                  defaultChecked={governance.crisis_escalation}
+                />
+                Escalonar crises automaticamente para humano
+              </label>
+              <label>
+                Nota LGPD (visível na operação)
+                <textarea
+                  name="lgpd_note"
+                  defaultValue={governance.lgpd_note ?? ""}
+                />
+              </label>
+              <strong>Checklist — só o dono consegue verificar estas contas</strong>
+              <p style={{ opacity: 0.8, marginTop: 4 }}>
+                O agente guia; a verificação de identidade nas plataformas é
+                sempre humana.
+              </p>
+              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  name="google_business"
+                  type="checkbox"
+                  defaultChecked={!!governance.account_checklist.google_business}
+                />
+                Perfil da Empresa no Google (Business Profile) verificado
+              </label>
+              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  name="meta_business"
+                  type="checkbox"
+                  defaultChecked={!!governance.account_checklist.meta_business}
+                />
+                Meta Business Manager criado/verificado
+              </label>
+              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  name="whatsapp_business"
+                  type="checkbox"
+                  defaultChecked={
+                    !!governance.account_checklist.whatsapp_business
+                  }
+                />
+                WhatsApp Business / API credenciado
+              </label>
+              <button className="primary" disabled={busy} type="submit">
+                Salvar governança
+              </button>
+            </form>
+          </article>
+
+          <article className="panel">
+            <div className="panel-title">
+              <div>
+                <span>GASTOS</span>
+                <h2>Pedidos de mídia paga</h2>
+              </div>
+            </div>
+            <form onSubmit={requestSpend}>
+              <label>
+                Canal
+                <select name="channel" defaultValue="meta_ads">
+                  <option value="meta_ads">Meta Ads</option>
+                  <option value="google_ads">Google Ads</option>
+                  <option value="other">Outro</option>
+                </select>
+              </label>
+              <label>
+                Descrição
+                <input name="description" required minLength={2} />
+              </label>
+              <label>
+                Valor (R$)
+                <input
+                  name="amount"
+                  type="number"
+                  min={0.01}
+                  step="0.01"
+                  required
+                />
+              </label>
+              <button className="primary" disabled={busy} type="submit">
+                Registrar gasto / pedido
+              </button>
+            </form>
+            <p style={{ opacity: 0.8 }}>
+              Dentro do teto: aprovado e contabilizado. Acima do teto: aguarda
+              aprovação do owner/admin.
+            </p>
+            {spends.length === 0 ? (
+              <div className="empty">
+                <strong>Nenhum pedido</strong>
+                <p>Verba de Ads é sempre separada da mensalidade OperAI.</p>
+              </div>
+            ) : (
+              spends.map((s) => (
+                <div className="campaign-card" key={s.id}>
+                  <div>
+                    <strong>{money(s.amount_cents)}</strong>
+                    <small>
+                      {s.channel} · {s.description}
+                    </small>
+                  </div>
+                  <span className={`finance-status ${s.status}`}>{s.status}</span>
+                  {s.status === "pending" && (
+                    <div className="proposal-actions">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void reviewSpend(s.id, "approved")}
+                      >
+                        Aprovar
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void reviewSpend(s.id, "rejected")}
+                      >
+                        Rejeitar
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))
             )}

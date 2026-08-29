@@ -111,6 +111,9 @@ export type MarketingLead = {
   campaign_id: string | null;
   contact_id: string | null;
   opportunity_id: string | null;
+  consent_lgpd?: boolean;
+  consent_at?: string | null;
+  is_crisis?: boolean;
   created_at: string | null;
 };
 
@@ -119,7 +122,33 @@ export type MarketingConversion = {
   interests: number;
   leads_with_contact: number;
   opportunities: number;
+  crisis?: number;
   by_channel: { social: number; email: number; whatsapp: number };
+};
+
+export type MarketingGovernance = {
+  id: string;
+  monthly_ad_ceiling_cents: number;
+  spent_cents: number;
+  remaining_cents: number;
+  crisis_escalation: boolean;
+  lgpd_note: string | null;
+  account_checklist: {
+    google_business?: boolean;
+    meta_business?: boolean;
+    whatsapp_business?: boolean;
+  };
+  updated_at: string | null;
+};
+
+export type MarketingSpendRequest = {
+  id: string;
+  channel: string;
+  description: string;
+  amount_cents: number;
+  status: string;
+  created_at: string | null;
+  reviewed_at: string | null;
 };
 
 export type Activity = {

@@ -120,6 +120,22 @@ class MarketingLeadIn(BaseModel):
     campaign_id:str|None=None
     company:str|None=Field(default=None,max_length=160)
     value_cents:int=Field(default=0,ge=0)
+    consent_lgpd:bool=False
+    is_crisis:bool=False
+
+class MarketingGovernanceIn(BaseModel):
+    monthly_ad_ceiling_cents:int|None=Field(default=None,ge=0)
+    crisis_escalation:bool|None=None
+    lgpd_note:str|None=Field(default=None,max_length=4000)
+    account_checklist:dict|None=None
+
+class MarketingSpendIn(BaseModel):
+    channel:str=Field(pattern=r"^(google_ads|meta_ads|other)$")
+    description:str=Field(min_length=2,max_length=240)
+    amount_cents:int=Field(gt=0)
+
+class MarketingSpendReviewIn(BaseModel):
+    status:str=Field(pattern=r"^(approved|rejected)$")
 
 class LlmSettingsIn(BaseModel):
     provider:str=Field(pattern=r"^(openai|groq|openrouter)$")

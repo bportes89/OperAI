@@ -88,7 +88,7 @@ class MarketingPlaybook(Base):
     created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now())
     updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now(),onupdate=func.now())
 class MarketingLead(Base):
-    """Sprint 2: interesse em conteúdo → contato/oportunidade (handoff Marketing → Comercial)."""
+    """Sprint 2/3: interesse → CRM + LGPD consent + escalonamento de crise."""
     __tablename__="marketing_leads";__table_args__=(Index("ix_marketing_lead_tenant_created","organization_id","created_at"),)
     id:Mapped[uuid.UUID]=mapped_column(primary_key=True,default=uuid.uuid4)
     organization_id:Mapped[uuid.UUID]=mapped_column(ForeignKey("organizations.id",ondelete="CASCADE"),index=True)
@@ -103,7 +103,35 @@ class MarketingLead(Base):
     email:Mapped[str|None]=mapped_column(String(255))
     note:Mapped[str|None]=mapped_column(Text)
     status:Mapped[str]=mapped_column(String(30),default="handed_off")
+    consent_lgpd:Mapped[bool]=mapped_column(Boolean,default=False)
+    consent_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
+    is_crisis:Mapped[bool]=mapped_column(Boolean,default=False)
     created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now())
+class MarketingGovernance(Base):
+    """Sprint 3: teto de mídia, checklist de contas (só o dono) e regras de crise/LGPD."""
+    __tablename__="marketing_governance";__table_args__=(UniqueConstraint("organization_id"),)
+    id:Mapped[uuid.UUID]=mapped_column(primary_key=True,default=uuid.uuid4)
+    organization_id:Mapped[uuid.UUID]=mapped_column(ForeignKey("organizations.id",ondelete="CASCADE"),index=True)
+    updated_by:Mapped[uuid.UUID|None]=mapped_column(ForeignKey("users.id",ondelete="SET NULL"),index=True)
+    monthly_ad_ceiling_cents:Mapped[int]=mapped_column(Integer,default=0)
+    spent_cents:Mapped[int]=mapped_column(Integer,default=0)
+    crisis_escalation:Mapped[bool]=mapped_column(Boolean,default=True)
+    lgpd_note:Mapped[str|None]=mapped_column(Text)
+    account_checklist:Mapped[dict]=mapped_column(JSON,default=dict)
+    created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now())
+    updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now(),onupdate=func.now())
+class MarketingSpendRequest(Base):
+    __tablename__="marketing_spend_requests";__table_args__=(Index("ix_marketing_spend_tenant_status","organization_id","status"),)
+    id:Mapped[uuid.UUID]=mapped_column(primary_key=True,default=uuid.uuid4)
+    organization_id:Mapped[uuid.UUID]=mapped_column(ForeignKey("organizations.id",ondelete="CASCADE"),index=True)
+    created_by:Mapped[uuid.UUID]=mapped_column(ForeignKey("users.id",ondelete="CASCADE"),index=True)
+    reviewed_by:Mapped[uuid.UUID|None]=mapped_column(ForeignKey("users.id",ondelete="SET NULL"),index=True)
+    channel:Mapped[str]=mapped_column(String(40))
+    description:Mapped[str]=mapped_column(String(240))
+    amount_cents:Mapped[int]=mapped_column(Integer)
+    status:Mapped[str]=mapped_column(String(30),default="pending")
+    created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now())
+    reviewed_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
 class AuditLog(Base):
     __tablename__="audit_logs"
     id:Mapped[uuid.UUID]=mapped_column(primary_key=True,default=uuid.uuid4);organization_id:Mapped[uuid.UUID]=mapped_column(index=True);user_id:Mapped[uuid.UUID]=mapped_column(index=True);action:Mapped[str]=mapped_column(String(80));resource:Mapped[str]=mapped_column(String(120));detail:Mapped[str|None]=mapped_column(Text);created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now(),index=True)
