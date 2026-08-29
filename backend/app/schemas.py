@@ -51,6 +51,12 @@ class OpportunityUpdateIn(BaseModel):
 class InboxThreadStatusIn(BaseModel):
     status:str=Field(pattern=r"^(open|human|closed)$")
 
+class InboxOpportunityIn(BaseModel):
+    company:str|None=Field(default=None,min_length=2,max_length=160)
+    value_cents:int=Field(default=0,ge=0)
+    stage:str=Field(default="new",pattern=r"^(new|qualified|proposal|won|lost)$")
+    pause_ai:bool=True
+
 class AgentIn(BaseModel):
     name:str=Field(min_length=2,max_length=120)
     agent_type:str=Field(pattern=r"^(commercial|whatsapp|finance|marketing)$")

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { apiJson } from "../../lib/api";
 import { formatDateTime } from "../../lib/format";
@@ -7,6 +8,7 @@ import type {
   Channel,
   InboxMessage,
   InboxThread,
+  Opportunity,
   WhatsAppTemplate,
 } from "../../lib/types";
 
@@ -27,6 +29,7 @@ export default function InboxPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [crmOpen, setCrmOpen] = useState(false);
   const [templates, setTemplates] = useState<WhatsAppTemplate[]>([]);
   const [templatesHint, setTemplatesHint] = useState("");
   const [templatesSource, setTemplatesSource] = useState("");
@@ -197,6 +200,7 @@ export default function InboxPage() {
 
   async function openThread(threadId: string) {
     setSelectedThread(threadId);
+    setCrmOpen(false);
     setError("");
     setMessage("");
     try {
@@ -288,6 +292,49 @@ export default function InboxPage() {
         closed: "Conversa encerrada.",
       };
       setMessage(labels[status]);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createCrmFromThread(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedThread) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    const data = Object.fromEntries(new FormData(event.currentTarget));
+    const value = Number(data.value || 0);
+    try {
+      const result = await apiJson<{
+        opportunity: Opportunity;
+        thread_status?: string;
+        message?: string;
+      }>(`/api/v1/inbox/threads/${selectedThread}/opportunity`, {
+        method: "POST",
+        body: JSON.stringify({
+          company: String(data.company || "").trim() || null,
+          value_cents: Math.round((Number.isFinite(value) ? value : 0) * 100),
+          stage: "new",
+          pause_ai: true,
+        }),
+      });
+      if (result.thread_status) {
+        setThreads((prev) =>
+          prev.map((t) =>
+            t.id === selectedThread
+              ? { ...t, status: result.thread_status as string }
+              : t,
+          ),
+        );
+      }
+      setCrmOpen(false);
+      setMessage(
+        result.message ||
+          `Oportunidade “${result.opportunity.company}” criada no CRM.`,
+      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -477,7 +524,58 @@ export default function InboxPage() {
                     Encerrar
                   </button>
                 )}
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={busy}
+                  onClick={() => setCrmOpen((v) => !v)}
+                >
+                  {crmOpen ? "Cancelar CRM" : "Criar no CRM"}
+                </button>
+                <Link className="secondary" href="/app/crm">
+                  Abrir CRM
+                </Link>
               </div>
+              {crmOpen && activeThread && (
+                <form
+                  onSubmit={createCrmFromThread}
+                  style={{
+                    display: "grid",
+                    gap: 10,
+                    marginBottom: 14,
+                    padding: 12,
+                    border: "1px solid rgba(0,0,0,.08)",
+                    borderRadius: 10,
+                  }}
+                >
+                  <p style={{ margin: 0, opacity: 0.85, lineHeight: 1.45 }}>
+                    Cria oportunidade em Novos com origem WhatsApp e pausa a IA
+                    nesta conversa.
+                  </p>
+                  <label>
+                    Empresa / lead
+                    <input
+                      name="company"
+                      defaultValue={activeThread.contact_name}
+                      minLength={2}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Valor estimado (R$)
+                    <input
+                      name="value"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      defaultValue="0"
+                    />
+                  </label>
+                  <button className="primary" disabled={busy} type="submit">
+                    {busy ? "Criando…" : "Salvar no pipeline"}
+                  </button>
+                </form>
+              )}
               <p style={{ marginTop: 0, marginBottom: 12, opacity: 0.85, lineHeight: 1.45 }}>
                 {activeThread?.status === "human"
                   ? "IA pausada — só você responde nesta conversa."

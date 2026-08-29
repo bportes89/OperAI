@@ -23,7 +23,7 @@ from app.models import (
 from app.rag import embed_text,retrieve
 from app.schemas import (
     AgentFromPresetIn,AgentIn,AgentQueryIn,AgentStatusIn,BrandKitIn,CampaignIn,CampaignSpendRequestIn,CampaignStatusIn,ChannelIn,CheckoutIn,
-    EvolutionConnectIn,ForgotPasswordIn,IncomingMessageIn,InboxThreadStatusIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,MetaConnectIn,
+    EvolutionConnectIn,ForgotPasswordIn,IncomingMessageIn,InboxOpportunityIn,InboxThreadStatusIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,MetaConnectIn,
     MarketingDiagnosisIn,MarketingDiscoveryIn,MarketingEngagementIn,MarketingGovernanceIn,MarketingLeadIn,MarketingPackageIn,MarketingSpendIn,
     MarketingSpendReviewIn,OnboardingUpdateIn,OpportunityIn,OpportunityStageIn,OpportunityUpdateIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
     AcceptInviteIn,FinanceSendIn,RegisterIn,ResetPasswordIn,TeamMemberIn,TeamMemberUpdateIn,TemplateSendIn,TokenPair,
@@ -1141,6 +1141,56 @@ async def patch_inbox_thread_status(thread_id:str,data:InboxThreadStatusIn,p:Ann
         "status":thread.status,
         "unread_count":thread.unread_count,
         "last_message_at":thread.last_message_at,
+    }
+
+@router.post("/inbox/threads/{thread_id}/opportunity",status_code=201)
+async def opportunity_from_inbox_thread(thread_id:str,data:InboxOpportunityIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER,Role.OPERATOR))],db:Db):
+    """Cria oportunidade no CRM a partir da conversa WhatsApp."""
+    await require_billing_access(p.organization_id,db)
+    thread=await db.scalar(select(InboxThread).where(and_(InboxThread.id==parse_uuid(thread_id,"Thread"),InboxThread.organization_id==p.organization_id)))
+    if not thread:raise HTTPException(404,"Thread not found")
+    contact=await db.scalar(select(Contact).where(Contact.id==thread.contact_id))
+    if not contact:raise HTTPException(404,"Contact not found")
+    company=(data.company or "").strip() or contact.name
+    if len(company)<2:company=contact.phone or "Lead WhatsApp"
+    last_msg=await db.scalar(
+        select(ChannelMessage)
+        .where(and_(ChannelMessage.thread_id==thread.id,ChannelMessage.organization_id==p.organization_id,ChannelMessage.direction=="inbound"))
+        .order_by(ChannelMessage.created_at.desc())
+        .limit(1)
+    )
+    snippet=(last_msg.content or "").strip().replace("\n"," ")[:80] if last_msg else ""
+    source_title=f"WhatsApp · {contact.phone}"
+    if snippet:source_title=f"{source_title} · {snippet}"
+    source_title=source_title[:180]
+    item=Opportunity(
+        organization_id=p.organization_id,
+        company=company[:160],
+        contact=contact.name[:160],
+        stage=data.stage,
+        value_cents=data.value_cents,
+        source_title=source_title,
+        source_channel="whatsapp",
+    )
+    db.add(item)
+    if data.pause_ai and (thread.status or "open")=="open":
+        thread.status="human"
+        db.add(AuditLog(
+            organization_id=p.organization_id,user_id=p.user_id,
+            action="inbox.thread_status",resource="inbox_thread",
+            detail=f"{thread.id}:open:human",
+        ))
+    db.add(AuditLog(
+        organization_id=p.organization_id,user_id=p.user_id,
+        action="opportunity.created",resource="opportunity",
+        detail=f"{company}:whatsapp:{contact.phone}",
+    ))
+    await db.commit();await db.refresh(item)
+    return {
+        "opportunity":_opportunity_out(item),
+        "thread_id":str(thread.id),
+        "thread_status":thread.status,
+        "message":f"Oportunidade “{item.company}” criada no CRM (origem WhatsApp).",
     }
 
 @router.get("/inbox/threads/{thread_id}/messages")
