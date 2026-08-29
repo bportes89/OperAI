@@ -43,7 +43,14 @@ class AgentStatusIn(BaseModel):
 class KnowledgeDocumentIn(BaseModel):
     title:str=Field(min_length=2,max_length=180)
     content:str=Field(min_length=20,max_length=500000)
-    source_type:str=Field(default="text",pattern=r"^(text|faq|policy|manual)$")
+    source_type:str=Field(default="text",pattern=r"^(text|faq|policy|manual|pdf|docx)$")
+
+class MetaConnectIn(BaseModel):
+    name:str=Field(min_length=2,max_length=120)
+    phone_number_id:str=Field(min_length=5,max_length=40,pattern=r"^[0-9]+$")
+    access_token:str=Field(min_length=20,max_length=800)
+    waba_id:str|None=Field(default=None,max_length=40)
+    verify_token:str|None=Field(default=None,min_length=8,max_length=120)
 
 class AgentQueryIn(BaseModel):
     question:str=Field(min_length=3,max_length=4000)

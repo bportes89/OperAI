@@ -9,6 +9,7 @@ export default function KnowledgePage() {
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -24,10 +25,22 @@ export default function KnowledgePage() {
     void load();
   }, [load]);
 
+  async function markFaqDone() {
+    try {
+      await apiJson("/api/v1/settings/onboarding", {
+        method: "PATCH",
+        body: JSON.stringify({ checklist: { faq: true }, step: "faq" }),
+      });
+    } catch {
+      /* optional — checklist real vem da detecção */
+    }
+  }
+
   async function createDocument(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError("");
+    setMessage("");
     const form = event.currentTarget;
     try {
       await apiJson("/api/v1/knowledge/documents", {
@@ -35,18 +48,38 @@ export default function KnowledgePage() {
         body: JSON.stringify(Object.fromEntries(new FormData(form))),
       });
       form.reset();
+      setMessage("Conteúdo publicado na base.");
       await load();
-      try {
-        await apiJson("/api/v1/settings/onboarding", {
-          method: "PATCH",
-          body: JSON.stringify({
-            checklist: { faq: true },
-            step: "faq",
-          }),
-        });
-      } catch {
-        /* optional */
-      }
+      await markFaqDone();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function uploadDocument(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    setMessage("");
+    const form = event.currentTarget;
+    const fd = new FormData(form);
+    const file = fd.get("file");
+    if (!(file instanceof File) || file.size === 0) {
+      setError("Escolha um arquivo PDF ou Word (.docx).");
+      setBusy(false);
+      return;
+    }
+    try {
+      await apiJson("/api/v1/knowledge/documents/upload", {
+        method: "POST",
+        body: fd,
+      });
+      form.reset();
+      setMessage(`Arquivo “${file.name}” publicado na base.`);
+      await load();
+      await markFaqDone();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -77,12 +110,13 @@ export default function KnowledgePage() {
         </div>
       </header>
       {error && <p className="error">{error}</p>}
+      {message && <p className="success">{message}</p>}
 
       <article className="panel" style={{ marginBottom: 16 }}>
         <p style={{ margin: 0, lineHeight: 1.55, opacity: 0.9 }}>
           Aqui fica o que a sua empresa sabe: FAQ, políticas e preços. Os
           agentes usam isso para responder no tom do negócio — sem inventar o
-          que não está publicado.
+          que não está publicado. Você pode colar texto ou enviar PDF/Word.
         </p>
       </article>
 
@@ -117,11 +151,9 @@ export default function KnowledgePage() {
           ) : documents.length === 0 ? (
             <div className="empty">
               <strong>Base ainda vazia</strong>
-              <p>
-                Cole um FAQ curto para começar. Em breve: upload de PDF e Word.
-              </p>
+              <p>Cole um FAQ ou envie um PDF/Word ao lado.</p>
               <Link className="primary" href="#ingest">
-                Adicionar FAQ
+                Adicionar conteúdo
               </Link>
             </div>
           ) : (
@@ -137,41 +169,74 @@ export default function KnowledgePage() {
           )}
         </article>
 
-        <article className="panel" id="ingest">
-          <div className="panel-title">
-            <div>
-              <span>NOVO</span>
-              <h2>Publicar conteúdo</h2>
+        <div style={{ display: "grid", gap: 18 }}>
+          <article className="panel" id="upload">
+            <div className="panel-title">
+              <div>
+                <span>ARQUIVO</span>
+                <h2>Enviar PDF ou Word</h2>
+              </div>
             </div>
-          </div>
-          <form onSubmit={createDocument}>
-            <label>
-              Título
-              <input name="title" required minLength={2} placeholder="Ex.: FAQ comercial" />
-            </label>
-            <label>
-              Tipo
-              <select name="source_type" defaultValue="faq">
-                <option value="faq">FAQ</option>
-                <option value="text">Texto</option>
-                <option value="policy">Política</option>
-                <option value="manual">Manual</option>
-              </select>
-            </label>
-            <label>
-              Conteúdo
-              <textarea
-                name="content"
-                required
-                minLength={20}
-                placeholder="Cole aqui perguntas e respostas, políticas ou scripts…"
-              />
-            </label>
-            <button className="primary" disabled={busy}>
-              Publicar na base
-            </button>
-          </form>
-        </article>
+            <p style={{ marginTop: 0, opacity: 0.85, lineHeight: 1.5 }}>
+              Extraímos o texto automaticamente (até 5 MB). PDFs só-imagem
+              (escaneados) não funcionam sem OCR — nesse caso, cole o texto.
+            </p>
+            <form onSubmit={uploadDocument}>
+              <label>
+                Título (opcional)
+                <input name="title" minLength={2} placeholder="Ex.: Manual de atendimento" />
+              </label>
+              <label>
+                Arquivo
+                <input
+                  name="file"
+                  type="file"
+                  required
+                  accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                />
+              </label>
+              <button className="primary" disabled={busy}>
+                {busy ? "Publicando…" : "Publicar arquivo"}
+              </button>
+            </form>
+          </article>
+
+          <article className="panel" id="ingest">
+            <div className="panel-title">
+              <div>
+                <span>TEXTO</span>
+                <h2>Colar conteúdo</h2>
+              </div>
+            </div>
+            <form onSubmit={createDocument}>
+              <label>
+                Título
+                <input name="title" required minLength={2} placeholder="Ex.: FAQ comercial" />
+              </label>
+              <label>
+                Tipo
+                <select name="source_type" defaultValue="faq">
+                  <option value="faq">FAQ</option>
+                  <option value="text">Texto</option>
+                  <option value="policy">Política</option>
+                  <option value="manual">Manual</option>
+                </select>
+              </label>
+              <label>
+                Conteúdo
+                <textarea
+                  name="content"
+                  required
+                  minLength={20}
+                  placeholder="Cole aqui perguntas e respostas, políticas ou scripts…"
+                />
+              </label>
+              <button className="primary" disabled={busy}>
+                Publicar na base
+              </button>
+            </form>
+          </article>
+        </div>
       </div>
     </>
   );

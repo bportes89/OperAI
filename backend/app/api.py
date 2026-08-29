@@ -1,16 +1,18 @@
 from datetime import UTC,date,datetime,timedelta
 from typing import Annotated,Any
 import hmac,secrets,uuid
-from fastapi import APIRouter,Depends,Header,HTTPException,Request
+from fastapi import APIRouter,Depends,File,Form,Header,HTTPException,Request,UploadFile
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import and_,select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app import asaas,evolution,llm
+from app import asaas,evolution,llm,meta_whatsapp
 from app.auth import Principal,current_principal,require_roles
 from app.billing_guard import ensure_subscription_on_register,require_billing_access,subscription_access_payload
 from app.core.config import get_settings
 from app.core.database import get_session
 from app.core.security import create_access_token,hash_password,hash_refresh_token,new_refresh_token,verify_password
 from app.crypto import decrypt_secret,encrypt_secret
+from app.documents import extract_text_from_upload
 from app.models import (
     Agent,AgentTask,AuditLog,Channel,ChannelMessage,Contact,Conversation,ConversationMessage,
     InboxThread,KnowledgeChunk,KnowledgeDocument,LlmCredential,MarketingCampaign,MarketingEngagement,MarketingGovernance,
@@ -21,7 +23,7 @@ from app.models import (
 from app.rag import embed_text,retrieve
 from app.schemas import (
     AgentFromPresetIn,AgentIn,AgentQueryIn,AgentStatusIn,CampaignIn,CampaignStatusIn,ChannelIn,CheckoutIn,
-    EvolutionConnectIn,IncomingMessageIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,
+    EvolutionConnectIn,IncomingMessageIn,KnowledgeDocumentIn,LlmSettingsIn,LoginIn,MetaConnectIn,
     MarketingDiagnosisIn,MarketingDiscoveryIn,MarketingEngagementIn,MarketingGovernanceIn,MarketingLeadIn,MarketingPackageIn,MarketingSpendIn,
     MarketingSpendReviewIn,OnboardingUpdateIn,OpportunityIn,OutgoingMessageIn,PaymentIn,ReceivableIn,RefreshIn,
     RegisterIn,TeamMemberIn,TeamMemberUpdateIn,TokenPair,
@@ -456,7 +458,30 @@ async def create_knowledge_document(data:KnowledgeDocumentIn,p:Annotated[Princip
     db.add(item);await db.flush()
     db.add_all([KnowledgeChunk(organization_id=p.organization_id,document_id=item.id,position=i,content=part,embedding=embed_text(part)) for i,part in enumerate(parts)])
     db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="knowledge.ingested",resource="knowledge_document",detail=f"{data.title}:{len(parts)} chunks"))
-    await db.commit();return {"id":str(item.id),"title":item.title,"chunk_count":len(parts),"status":item.status}
+    await db.commit();return {"id":str(item.id),"title":item.title,"chunk_count":len(parts),"status":item.status,"source_type":item.source_type}
+
+@router.post("/knowledge/documents/upload",status_code=201)
+async def upload_knowledge_document(
+    p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER,Role.OPERATOR))],
+    db:Db,
+    file:UploadFile=File(...),
+    title:str|None=Form(default=None),
+):
+    await require_billing_access(p.organization_id,db)
+    raw=await file.read()
+    try:
+        content,source_type=extract_text_from_upload(file.filename or "arquivo.pdf",raw)
+    except ValueError as exc:
+        raise HTTPException(422,str(exc)) from exc
+    doc_title=(title or "").strip() or (file.filename or "Documento").rsplit(".",1)[0][:180]
+    if len(doc_title)<2:doc_title="Documento da empresa"
+    parts=split_content(content)
+    item=KnowledgeDocument(organization_id=p.organization_id,title=doc_title,source_type=source_type,content=content,chunk_count=len(parts))
+    db.add(item);await db.flush()
+    db.add_all([KnowledgeChunk(organization_id=p.organization_id,document_id=item.id,position=i,content=part,embedding=embed_text(part)) for i,part in enumerate(parts)])
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="knowledge.ingested",resource="knowledge_document",detail=f"{doc_title}:{len(parts)} chunks:{source_type}"))
+    await db.commit()
+    return {"id":str(item.id),"title":item.title,"chunk_count":len(parts),"status":item.status,"source_type":item.source_type}
 
 @router.get("/knowledge/search")
 async def search_knowledge(q:str,p:Annotated[Principal,Depends(current_principal)],db:Db):
@@ -553,6 +578,105 @@ async def evolution_connect(data:EvolutionConnectIn,p:Annotated[Principal,Depend
         "mode":created.get("mode","evolution"),
         "webhook_url":f"{get_settings().public_api_url.rstrip('/')}/api/v1/webhooks/evolution/{item.external_key}",
     }
+
+@router.post("/channels/meta/connect",status_code=201)
+async def meta_connect(data:MetaConnectIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN))],db:Db):
+    """Conecta WhatsApp oficial (Cloud API). O dono cria o app na Meta e cola as credenciais."""
+    await require_billing_access(p.organization_id,db)
+    external_key=f"meta_{data.phone_number_id}"
+    if await db.scalar(select(Channel).where(Channel.external_key==external_key)):
+        raise HTTPException(409,"Já existe um canal Meta com este Phone Number ID")
+    verify=data.verify_token.strip() if data.verify_token else secrets.token_urlsafe(18)
+    item=Channel(
+        organization_id=p.organization_id,
+        name=data.name,
+        kind="whatsapp",
+        external_key=external_key,
+        webhook_secret_hash=hash_refresh_token(verify),
+        provider="meta",
+        instance_name=data.phone_number_id,
+        config={
+            "phone_number_id":data.phone_number_id,
+            "waba_id":data.waba_id,
+            "access_token_encrypted":encrypt_secret(data.access_token.strip()),
+            "graph_version":"v21.0",
+        },
+    )
+    db.add(item)
+    db.add(AuditLog(organization_id=p.organization_id,user_id=p.user_id,action="channel.meta_connected",resource="channel",detail=data.phone_number_id))
+    await db.commit();await db.refresh(item)
+    webhook_url=f"{get_settings().public_api_url.rstrip('/')}/api/v1/webhooks/meta/{item.external_key}"
+    return {
+        "id":str(item.id),
+        "name":item.name,
+        "provider":item.provider,
+        "external_key":item.external_key,
+        "phone_number_id":data.phone_number_id,
+        "webhook_url":webhook_url,
+        "verify_token":verify,
+        "message":"Cole a URL e o verify token no painel da Meta (Webhook do WhatsApp).",
+    }
+
+@router.get("/webhooks/meta/{channel_key}")
+async def meta_webhook_verify(channel_key:str,request:Request,db:Db):
+    mode=request.query_params.get("hub.mode")
+    token=request.query_params.get("hub.verify_token") or ""
+    challenge=request.query_params.get("hub.challenge") or ""
+    if mode!="subscribe" or not token or not challenge:
+        raise HTTPException(400,"Parâmetros de verificação Meta incompletos")
+    channel=await db.scalar(select(Channel).where(and_(Channel.external_key==channel_key,Channel.active.is_(True),Channel.provider=="meta")))
+    if not channel or not hmac.compare_digest(channel.webhook_secret_hash,hash_refresh_token(token)):
+        raise HTTPException(403,"Verify token inválido")
+    return PlainTextResponse(challenge)
+
+@router.post("/webhooks/meta/{channel_key}",status_code=200)
+async def meta_webhook(channel_key:str,request:Request,db:Db):
+    channel=await db.scalar(select(Channel).where(and_(Channel.external_key==channel_key,Channel.active.is_(True),Channel.provider=="meta")))
+    if not channel:raise HTTPException(404,"Channel not found")
+    payload=await request.json()
+    parsed_list=meta_whatsapp.parse_inbound(payload if isinstance(payload,dict) else {})
+    if not parsed_list:return {"status":"ignored"}
+    cfg=channel.config or {}
+    phone_number_id=str(cfg.get("phone_number_id") or channel.instance_name or "")
+    token_enc=cfg.get("access_token_encrypted")
+    access_token=decrypt_secret(token_enc) if token_enc else ""
+    accepted=0
+    for parsed in parsed_list:
+        existing=await db.scalar(select(ChannelMessage).where(and_(ChannelMessage.channel_id==channel.id,ChannelMessage.external_message_id==parsed["external_message_id"])))
+        if existing:continue
+        contact=await db.scalar(select(Contact).where(and_(Contact.organization_id==channel.organization_id,Contact.phone==parsed["phone"])))
+        if not contact:
+            contact=Contact(organization_id=channel.organization_id,name=parsed["contact_name"],phone=parsed["phone"])
+            db.add(contact);await db.flush()
+        thread=await db.scalar(select(InboxThread).where(and_(InboxThread.channel_id==channel.id,InboxThread.contact_id==contact.id)))
+        if not thread:
+            thread=InboxThread(organization_id=channel.organization_id,channel_id=channel.id,contact_id=contact.id)
+            db.add(thread);await db.flush()
+        thread.unread_count+=1;thread.last_message_at=datetime.now(UTC)
+        inbound=ChannelMessage(organization_id=channel.organization_id,channel_id=channel.id,thread_id=thread.id,external_message_id=parsed["external_message_id"],direction="inbound",content=parsed["text"],status="received")
+        db.add(inbound)
+        agent=await db.scalar(select(Agent).where(and_(Agent.organization_id==channel.organization_id,Agent.agent_type=="whatsapp",Agent.status=="active")))
+        if agent and access_token and phone_number_id:
+            rows=(await db.execute(select(KnowledgeChunk,KnowledgeDocument.title).join(KnowledgeDocument,KnowledgeDocument.id==KnowledgeChunk.document_id).where(KnowledgeChunk.organization_id==channel.organization_id))).all()
+            sources=retrieve(parsed["text"],list(rows),5)
+            try:
+                reply_text,_mode=await _org_llm_answer(channel.organization_id,agent,parsed["text"],sources,db)
+            except HTTPException:
+                reply_text="Recebemos sua mensagem. Em breve um atendente responde."
+            try:
+                await meta_whatsapp.send_text(phone_number_id,access_token,parsed["phone"],reply_text)
+                status="sent"
+            except Exception:
+                status="failed"
+            db.add(ChannelMessage(
+                organization_id=channel.organization_id,channel_id=channel.id,thread_id=thread.id,
+                external_message_id=f"out_{secrets.token_hex(10)}",direction="outbound",content=reply_text,status=status,
+            ))
+            db.add(AgentTask(organization_id=channel.organization_id,agent_id=agent.id,task_type="whatsapp.reply",title=f"Responder {parsed['contact_name']}",priority="high",status="completed",input_data={"thread_id":str(thread.id),"message":parsed["text"]},result_data={"reply":reply_text}))
+            thread.last_message_at=datetime.now(UTC)
+        accepted+=1
+    await db.commit()
+    return {"status":"accepted","messages":accepted}
 
 @router.get("/channels/{channel_id}/evolution/qr")
 async def evolution_qr(channel_id:str,p:Annotated[Principal,Depends(current_principal)],db:Db):
@@ -665,12 +789,23 @@ async def queue_outgoing_message(thread_id:str,data:OutgoingMessageIn,p:Annotate
     channel=await db.scalar(select(Channel).where(Channel.id==thread.channel_id))
     contact=await db.scalar(select(Contact).where(Contact.id==thread.contact_id))
     status="queued";error=None
-    if channel and contact and channel.active and channel.provider=="evolution" and channel.instance_name:
-        try:
-            await evolution.send_text(channel.instance_name,contact.phone,data.text)
-            status="sent"
-        except Exception as exc:
-            status="failed";error=str(exc)[:300]
+    if channel and contact and channel.active:
+        if channel.provider=="evolution" and channel.instance_name:
+            try:
+                await evolution.send_text(channel.instance_name,contact.phone,data.text)
+                status="sent"
+            except Exception as exc:
+                status="failed";error=str(exc)[:300]
+        elif channel.provider=="meta":
+            cfg=channel.config or {}
+            phone_number_id=str(cfg.get("phone_number_id") or channel.instance_name or "")
+            token_enc=cfg.get("access_token_encrypted")
+            try:
+                if not token_enc or not phone_number_id:raise ValueError("Canal Meta sem credenciais")
+                await meta_whatsapp.send_text(phone_number_id,decrypt_secret(token_enc),contact.phone,data.text)
+                status="sent"
+            except Exception as exc:
+                status="failed";error=str(exc)[:300]
     item=ChannelMessage(organization_id=p.organization_id,channel_id=thread.channel_id,thread_id=thread.id,external_message_id=f"queued_{secrets.token_hex(12)}",direction="outbound",content=data.text,status=status)
     thread.last_message_at=datetime.now(UTC)
     db.add_all([item,AuditLog(organization_id=p.organization_id,user_id=p.user_id,action=f"message.{status}",resource="inbox_thread",detail=str(thread.id))])
@@ -1445,6 +1580,7 @@ def _human_activity(action:str,resource:str,detail:str|None)->tuple[str,str]:
         "marketing.spend_reviewed":("Verba de anúncio revisada",d or "Decisão registrada"),
         "marketing.engagement_logged":("Engajamento registrado",d or "Métrica"),
         "marketing.package_upgraded":("Pacote de Marketing atualizado",d or "Upgrade"),
+        "channel.meta_connected":("WhatsApp oficial (Meta) conectado",d or "Cloud API"),
         "billing.checkout":("Assinatura / checkout",d or "Billing"),
         "team.member_created":("Membro adicionado à equipe",d or "Novo acesso"),
         "team.member_updated":("Equipe atualizada",d or "Permissão alterada"),

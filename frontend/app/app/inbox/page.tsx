@@ -12,6 +12,11 @@ export default function InboxPage() {
   const [messages, setMessages] = useState<InboxMessage[]>([]);
   const [channelSecret, setChannelSecret] = useState("");
   const [evolutionInfo, setEvolutionInfo] = useState("");
+  const [metaInfo, setMetaInfo] = useState<{
+    webhook_url: string;
+    verify_token: string;
+    message?: string;
+  } | null>(null);
   const [qrImage, setQrImage] = useState<string | null>(null);
   const [qrInfo, setQrInfo] = useState("");
   const [error, setError] = useState("");
@@ -35,6 +40,20 @@ export default function InboxPage() {
     void load();
   }, [load]);
 
+  async function markWhatsappDone() {
+    try {
+      await apiJson("/api/v1/settings/onboarding", {
+        method: "PATCH",
+        body: JSON.stringify({
+          checklist: { whatsapp: true },
+          step: "whatsapp",
+        }),
+      });
+    } catch {
+      /* optional */
+    }
+  }
+
   async function createChannel(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
@@ -51,6 +70,39 @@ export default function InboxPage() {
       setChannelSecret(result.webhook_secret);
       form.reset();
       await load();
+      await markWhatsappDone();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function connectMeta(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    setMetaInfo(null);
+    const form = event.currentTarget;
+    const data = Object.fromEntries(new FormData(form));
+    try {
+      const result = await apiJson<{
+        webhook_url: string;
+        verify_token: string;
+        message?: string;
+      }>("/api/v1/channels/meta/connect", {
+        method: "POST",
+        body: JSON.stringify({
+          name: data.name,
+          phone_number_id: String(data.phone_number_id).trim(),
+          access_token: String(data.access_token).trim(),
+          waba_id: String(data.waba_id || "").trim() || null,
+        }),
+      });
+      setMetaInfo(result);
+      form.reset();
+      await load();
+      await markWhatsappDone();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -94,19 +146,9 @@ export default function InboxPage() {
             `Canal Evolution conectado (${result.status ?? "ok"}). Use "Gerar QR" para vincular.`,
         );
       }
-      try {
-        await apiJson("/api/v1/settings/onboarding", {
-          method: "PATCH",
-          body: JSON.stringify({
-            checklist: { whatsapp: true },
-            step: "whatsapp",
-          }),
-        });
-      } catch {
-        /* optional */
-      }
       form.reset();
       await load();
+      await markWhatsappDone();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -178,6 +220,8 @@ export default function InboxPage() {
   }
 
   const activeThread = threads.find((t) => t.id === selectedThread);
+  const providerLabel = (p?: string) =>
+    p === "meta" ? "Meta oficial" : p === "evolution" ? "Evolution" : "Webhook";
 
   return (
     <>
@@ -212,24 +256,38 @@ export default function InboxPage() {
           />
           <small>
             WhatsApp do celular → Aparelhos conectados → Conectar aparelho. O QR
-            expira em ~1 minuto; use "Gerar QR" para renovar.
+            expira em ~1 minuto; use &quot;Gerar QR&quot; para renovar.
           </small>
         </div>
       )}
       {qrInfo && !qrImage && <p className="success">{qrInfo}</p>}
+      {metaInfo && (
+        <div className="secret-box">
+          <strong>Webhook Meta — copie agora</strong>
+          <p style={{ margin: "8px 0", opacity: 0.9 }}>{metaInfo.message}</p>
+          <small>Callback URL</small>
+          <code>{metaInfo.webhook_url}</code>
+          <small style={{ display: "block", marginTop: 8 }}>Verify token</small>
+          <code>{metaInfo.verify_token}</code>
+          <small>
+            No Meta for Developers → seu app → WhatsApp → Configuration →
+            Webhook: cole URL + token e assine o campo <em>messages</em>.
+          </small>
+        </div>
+      )}
 
       <div className="content-grid">
         <article className="panel">
           <div className="panel-title">
             <div>
               <span>CONVERSAS</span>
-              <h2>Threads</h2>
+              <h2>Caixa de entrada</h2>
             </div>
           </div>
           {threads.length === 0 ? (
             <div className="empty">
               <strong>Nenhuma conversa</strong>
-              <p>Conecte o WhatsApp para receber mensagens aqui.</p>
+              <p>Conecte o WhatsApp oficial (Meta) ou Evolution para receber mensagens.</p>
             </div>
           ) : (
             threads.map((thread) => (
@@ -266,7 +324,7 @@ export default function InboxPage() {
             <>
               <div className="panel-title" style={{ marginTop: "1.5rem" }}>
                 <div>
-                  <span>THREAD</span>
+                  <span>CONVERSA</span>
                   <h2>{activeThread?.contact_name ?? "Mensagens"}</h2>
                 </div>
               </div>
@@ -319,10 +377,82 @@ export default function InboxPage() {
           <article className="panel">
             <div className="panel-title">
               <div>
-                <span>EVOLUTION</span>
-                <h2>Conectar WhatsApp</h2>
+                <span>RECOMENDADO</span>
+                <h2>WhatsApp oficial (Meta)</h2>
               </div>
             </div>
+            <p style={{ marginTop: 0, opacity: 0.85, lineHeight: 1.5 }}>
+              Sem risco de ban por cliente não oficial. Você (dono) cria o app
+              na Meta, verifica o negócio e cola aqui o Phone Number ID e o
+              token. A OperAI recebe e responde via Cloud API.
+            </p>
+            <ol style={{ margin: "0 0 12px", paddingLeft: 18, opacity: 0.9, lineHeight: 1.55 }}>
+              <li>
+                Abra{" "}
+                <a
+                  href="https://developers.facebook.com/apps/"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Meta for Developers
+                </a>{" "}
+                → app com produto WhatsApp
+              </li>
+              <li>Copie Phone number ID e Access token temporário (ou permanente)</li>
+              <li>Salve aqui e configure o webhook com a URL/token que mostramos</li>
+            </ol>
+            <form onSubmit={connectMeta}>
+              <label>
+                Nome do canal
+                <input
+                  name="name"
+                  required
+                  minLength={2}
+                  placeholder="WhatsApp Comercial"
+                  defaultValue="WhatsApp Oficial"
+                />
+              </label>
+              <label>
+                Phone Number ID
+                <input
+                  name="phone_number_id"
+                  required
+                  pattern="[0-9]+"
+                  placeholder="Ex.: 123456789012345"
+                />
+              </label>
+              <label>
+                Access token
+                <input
+                  name="access_token"
+                  type="password"
+                  required
+                  minLength={20}
+                  autoComplete="off"
+                  placeholder="Token da Meta"
+                />
+              </label>
+              <label>
+                WABA ID (opcional)
+                <input name="waba_id" placeholder="WhatsApp Business Account ID" />
+              </label>
+              <button className="primary" disabled={busy}>
+                Conectar Meta Cloud API
+              </button>
+            </form>
+          </article>
+
+          <article className="panel">
+            <div className="panel-title">
+              <div>
+                <span>ALTERNATIVA</span>
+                <h2>Evolution (QR)</h2>
+              </div>
+            </div>
+            <p style={{ marginTop: 0, opacity: 0.85, lineHeight: 1.5 }}>
+              Conexão por QR (Baileys). Mais rápida para testar, mas não é a API
+              oficial — use com conta dedicada e consciência do risco.
+            </p>
             <form onSubmit={connectEvolution}>
               <label>
                 Nome do canal
@@ -343,7 +473,7 @@ export default function InboxPage() {
                   placeholder="empresa_01"
                 />
               </label>
-              <button className="primary" disabled={busy}>
+              <button className="secondary" disabled={busy}>
                 Conectar Evolution
               </button>
             </form>
@@ -354,7 +484,7 @@ export default function InboxPage() {
                     <div>
                       <strong>{ch.name}</strong>
                       <small>
-                        {ch.provider ?? "webhook"} · {ch.external_key}
+                        {providerLabel(ch.provider)} · {ch.external_key}
                       </small>
                     </div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -378,8 +508,8 @@ export default function InboxPage() {
           <article className="panel">
             <div className="panel-title">
               <div>
-                <span>WEBHOOK</span>
-                <h2>Canal manual</h2>
+                <span>AVANÇADO</span>
+                <h2>Webhook manual</h2>
               </div>
             </div>
             <form onSubmit={createChannel}>
@@ -396,7 +526,7 @@ export default function InboxPage() {
                   placeholder="empresa_whatsapp_01"
                 />
               </label>
-              <button className="primary" disabled={busy}>
+              <button className="secondary" disabled={busy}>
                 Criar canal
               </button>
             </form>
