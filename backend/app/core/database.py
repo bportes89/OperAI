@@ -4,5 +4,11 @@ from app.core.config import get_settings
 
 engine=create_async_engine(get_settings().database_url,pool_pre_ping=True)
 SessionLocal=async_sessionmaker(engine,expire_on_commit=False)
+
+# Criador de sessões assíncronas para uso em background tasks
+async def async_session_maker():
+    """Cria e retorna uma nova sessão de banco de dados assíncrona."""
+    return SessionLocal()
+
 async def get_session()->AsyncIterator[AsyncSession]:
     async with SessionLocal() as session: yield session
