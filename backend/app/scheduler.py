@@ -39,7 +39,7 @@ async def _execute_pending_tasks_job():
 def start_scheduler(
     interval_minutes: int = 5,
     max_instances: int = 1
-) -> AsyncIOScheduler:
+) -> AsyncIOScheduler | None:
     """
     Inicia o agendador automático de tarefas.
     
@@ -48,7 +48,7 @@ def start_scheduler(
         max_instances: Máximo de instâncias concorrentes do job
     
     Returns:
-        Instância do scheduler iniciado
+        Instância do scheduler iniciado ou None se já estiver rodando
     """
     global _scheduler
     
@@ -56,27 +56,41 @@ def start_scheduler(
         logger.warning("[Scheduler] Scheduler already running, skipping start")
         return _scheduler
     
-    _scheduler = AsyncIOScheduler()
-    
-    # Configura o job de execução de tarefas pendentes
-    _scheduler.add_job(
-        _execute_pending_tasks_job,
-        trigger=IntervalTrigger(minutes=interval_minutes),
-        id="execute_pending_tasks",
-        name="Execute Pending AgentTasks",
-        max_instances=max_instances,
-        replace_existing=True,
-        coalesce=True,  # Se perder a execução, executa uma vez quando possível
-        misfire_grace_time=300  # 5 minutos de tolerância para misfire
-    )
-    
-    _scheduler.start()
-    logger.info(
-        f"[Scheduler] Started successfully. "
-        f"Job 'execute_pending_tasks' will run every {interval_minutes} minutes"
-    )
-    
-    return _scheduler
+    try:
+        # Cria o scheduler com configuração segura para containers
+        # O scheduler vai usar o event loop padrão (não manipulamos explicitamente)
+        _scheduler = AsyncIOScheduler(
+            job_defaults={
+                'coalesce': True,
+                'max_instances': max_instances,
+                'misfire_grace_time': 300
+            }
+        )
+        
+        # Configura o job de execução de tarefas pendentes
+        _scheduler.add_job(
+            _execute_pending_tasks_job,
+            trigger=IntervalTrigger(minutes=interval_minutes),
+            id="execute_pending_tasks",
+            name="Execute Pending AgentTasks",
+            max_instances=max_instances,
+            replace_existing=True,
+            coalesce=True,
+            misfire_grace_time=300
+        )
+        
+        _scheduler.start()
+        logger.info(
+            f"[Scheduler] Started successfully. "
+            f"Job 'execute_pending_tasks' will run every {interval_minutes} minutes"
+        )
+        
+        return _scheduler
+        
+    except Exception as e:
+        logger.error(f"[Scheduler] Failed to start: {e}", exc_info=True)
+        _scheduler = None
+        return None
 
 
 def stop_scheduler():
@@ -87,9 +101,13 @@ def stop_scheduler():
         logger.warning("[Scheduler] Scheduler not running, nothing to stop")
         return
     
-    _scheduler.shutdown(wait=True)
-    _scheduler = None
-    logger.info("[Scheduler] Stopped successfully")
+    try:
+        _scheduler.shutdown(wait=True)
+        logger.info("[Scheduler] Stopped successfully")
+    except Exception as e:
+        logger.error(f"[Scheduler] Error stopping: {e}", exc_info=True)
+    finally:
+        _scheduler = None
 
 
 def get_scheduler_status() -> dict:
@@ -99,29 +117,20 @@ def get_scheduler_status() -> dict:
     if _scheduler is None:
         return {"status": "not_initialized", "running": False}
     
+    jobs_info = []
+    if _scheduler.running:
+        try:
+            for job in _scheduler.get_jobs():
+                jobs_info.append({
+                    "id": job.id,
+                    "name": job.name,
+                    "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
+                })
+        except Exception as e:
+            logger.error(f"[Scheduler] Error getting job info: {e}")
+    
     return {
         "status": "running" if _scheduler.running else "stopped",
         "running": _scheduler.running,
-        "jobs": [
-            {
-                "id": job.id,
-                "name": job.name,
-                "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
-                "trigger": str(job.trigger)
-            }
-            for job in _scheduler.get_jobs()
-        ]
+        "jobs": jobs_info
     }
-
-
-# Event handlers para lifecycle do FastAPI
-
-async def startup_scheduler():
-    """Inicia o scheduler no startup da aplicação."""
-    # Intervalo de 5 minutos entre execuções
-    start_scheduler(interval_minutes=5)
-
-
-async def shutdown_scheduler():
-    """Para o scheduler no shutdown da aplicação."""
-    stop_scheduler()
