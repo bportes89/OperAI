@@ -14,12 +14,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
+# Cache buster - muda a cada build para forçar reinstalação das dependências
+ARG CACHE_BUSTER=1
+
 COPY pyproject.toml ./
 COPY app ./app
 COPY migrations ./migrations
 COPY alembic.ini ./
 
-RUN pip install --upgrade pip && pip install -e .
+RUN pip install --upgrade pip && pip install -e . --force-reinstall --no-cache-dir
 
 COPY scripts/start.sh ./scripts/start.sh
 RUN chmod +x ./scripts/start.sh
