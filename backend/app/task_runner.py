@@ -11,7 +11,7 @@ from sqlalchemy import select, update
 
 from .models import AgentTask, Agent, LlmCredential, ChannelMessage, InboxThread, Receivable
 from .llm import chat, AGENT_SYSTEM_PROMPTS
-from .database import async_session_maker
+from .core.database import async_session_maker
 from .websocket import notify_task_completed, notify_task_failed
 
 
