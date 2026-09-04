@@ -12,6 +12,7 @@ from sqlalchemy import select, update
 from .models import AgentTask, Agent, LlmCredential, ChannelMessage, InboxThread, Receivable
 from .llm import chat, AGENT_SYSTEM_PROMPTS
 from .database import async_session_maker
+from .websocket import notify_task_completed, notify_task_failed
 
 
 class TaskExecutionError(Exception):
@@ -378,6 +379,13 @@ Ações Recomendadas:
         task.result_data = result
         task.completed_at = datetime.now(timezone.utc)
         await self.db.commit()
+        
+        # Notifica via WebSocket
+        try:
+            await notify_task_completed(str(task.organization_id), str(task.id), result)
+        except Exception as e:
+            # Não falha a tarefa se a notificação falhar
+            pass
     
     async def _mark_task_failed(self, task: AgentTask, error: str) -> None:
         """Marca tarefa como falha."""
@@ -385,6 +393,13 @@ Ações Recomendadas:
         task.error = error[:1000]  # Limita tamanho do erro
         task.completed_at = datetime.now(timezone.utc)
         await self.db.commit()
+        
+        # Notifica via WebSocket
+        try:
+            await notify_task_failed(str(task.organization_id), str(task.id), error)
+        except Exception as e:
+            # Não falha a tarefa se a notificação falhar
+            pass
 
 
 # Funções de conveniência para uso externo
