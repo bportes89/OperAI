@@ -13,6 +13,7 @@ from app.core.database import get_session
 from app.core.security import create_access_token,create_password_reset_token,create_team_invite_token,decode_password_reset_token,decode_team_invite_token,hash_password,hash_refresh_token,new_refresh_token,verify_password
 from app.crypto import decrypt_secret,encrypt_secret
 from app.documents import extract_text_from_upload
+from app.task_runner import run_pending_tasks, execute_single_task, TaskExecutionError
 from app.models import (
     Agent,AgentTask,AuditLog,Channel,ChannelMessage,Contact,Conversation,ConversationMessage,
     InboxThread,KnowledgeChunk,KnowledgeDocument,LlmCredential,MarketingCampaign,MarketingEngagement,MarketingGovernance,
@@ -2631,3 +2632,159 @@ async def seed_nexus(p:Annotated[Principal,Depends(require_roles(Role.OWNER))],d
         created.append("knowledge")
     await db.commit()
     return {"seeded":created,"status":"ok"}
+
+# ============================================================================
+# AgentTask Runner Endpoints
+# ============================================================================
+
+@router.post("/tasks/run-pending")
+async def api_run_pending_tasks(
+    p: Annotated[Principal, Depends(require_roles(Role.OWNER, Role.ADMIN, Role.MANAGER))],
+    db: Db,
+    limit: int = 10
+):
+    """Executa tarefas pendentes (queued) em lote.
+    
+    Útil para processamento manual de fila ou debugging.
+    """
+    from app.task_runner import TaskRunner, TaskExecutionError
+    
+    runner = TaskRunner(db)
+    results = await runner.run_pending_tasks(limit=limit)
+    
+    # Log da ação
+    db.add(AuditLog(
+        organization_id=p.organization_id,
+        user_id=p.user_id,
+        action="tasks.run_pending",
+        resource="agent_tasks",
+        detail=f"Processed {len(results)} tasks"
+    ))
+    await db.commit()
+    
+    return {
+        "processed": len(results),
+        "results": results
+    }
+
+
+@router.post("/tasks/{task_id}/execute")
+async def api_execute_single_task(
+    task_id: str,
+    p: Annotated[Principal, Depends(require_roles(Role.OWNER, Role.ADMIN, Role.MANAGER))],
+    db: Db
+):
+    """Executa uma tarefa específica pelo ID.
+    
+    Útil para reprocessamento manual ou debugging de tarefas falhas.
+    """
+    from app.task_runner import TaskRunner, TaskExecutionError
+    import uuid
+    
+    # Busca a tarefa
+    task_uuid = parse_uuid(task_id, "Task")
+    result = await db.execute(
+        select(AgentTask).where(
+            and_(
+                AgentTask.id == task_uuid,
+                AgentTask.organization_id == p.organization_id
+            )
+        )
+    )
+    task = result.scalar_one_or_none()
+    
+    if not task:
+        raise HTTPException(404, "Task not found")
+    
+    # Só permite reprocessar se estiver queued ou failed
+    if task.status not in ["queued", "failed"]:
+        raise HTTPException(409, f"Task cannot be executed (current status: {task.status}). Only 'queued' or 'failed' tasks can be reprocessed.")
+    
+    # Reset status para queued se estiver failed
+    if task.status == "failed":
+        task.status = "queued"
+        task.error = None
+        await db.commit()
+    
+    # Executa
+    runner = TaskRunner(db)
+    try:
+        task_result = await runner._execute_task(task)
+        
+        # Log da ação
+        db.add(AuditLog(
+            organization_id=p.organization_id,
+            user_id=p.user_id,
+            action="tasks.execute_single",
+            resource="agent_tasks",
+            detail=f"Executed task {task_id} ({task.task_type})"
+        ))
+        await db.commit()
+        
+        return {
+            "task_id": task_id,
+            "status": "completed",
+            "result": task_result
+        }
+        
+    except TaskExecutionError as e:
+        await runner._mark_task_failed(task, str(e))
+        raise HTTPException(500, f"Task execution failed: {e}")
+
+
+@router.get("/tasks/pending")
+async def api_list_pending_tasks(
+    p: Annotated[Principal, Depends(current_principal)],
+    db: Db,
+    limit: int = 50,
+    offset: int = 0
+):
+    """Lista tarefas pendentes (queued) com paginação."""
+    from sqlalchemy import func
+    
+    # Query de tarefas
+    result = await db.execute(
+        select(AgentTask)
+        .where(
+            and_(
+                AgentTask.organization_id == p.organization_id,
+                AgentTask.status == "queued"
+            )
+        )
+        .order_by(AgentTask.created_at.asc())
+        .limit(limit)
+        .offset(offset)
+    )
+    tasks = result.scalars().all()
+    
+    # Count total
+    count_result = await db.execute(
+        select(func.count(AgentTask.id))
+        .where(
+            and_(
+                AgentTask.organization_id == p.organization_id,
+                AgentTask.status == "queued"
+            )
+        )
+    )
+    total = count_result.scalar()
+    
+    return {
+        "tasks": [
+            {
+                "id": str(t.id),
+                "task_type": t.task_type,
+                "title": t.title,
+                "priority": t.priority,
+                "status": t.status,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+                "input_data": t.input_data
+            }
+            for t in tasks
+        ],
+        "pagination": {
+            "total": total,
+            "limit": limit,
+            "offset": offset
+        }
+    }
