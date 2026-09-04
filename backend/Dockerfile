@@ -15,7 +15,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Cache buster - muda a cada build para forçar reinstalação das dependências
-ARG CACHE_BUSTER=1
+# Incremente este número para forçar rebuild completo: 1 -> 2 -> 3 ...
+ARG CACHE_BUSTER=4
 
 COPY pyproject.toml ./
 COPY app ./app
