@@ -7,9 +7,16 @@ SessionLocal=async_sessionmaker(engine,expire_on_commit=False)
 
 # Factory para criar sessões assíncronas em background tasks (ex: scheduler)
 # Uso: async with async_session_maker() as session: ...
-async def async_session_maker():
-    """Factory que retorna uma nova sessão de banco de dados para uso em background tasks."""
-    return SessionLocal()
+class async_session_maker:
+    """Context manager para criar sessões de banco de dados em background tasks."""
+    
+    async def __aenter__(self):
+        self.session = SessionLocal()
+        return self.session
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.session:
+            await self.session.close()
 
 async def get_session()->AsyncIterator[AsyncSession]:
     async with SessionLocal() as session: yield session
