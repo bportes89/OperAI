@@ -20,6 +20,7 @@ const NAV = [
   { href: "/app/crm", label: "CRM" },
   { href: "/app/finance", label: "Cobrança" },
   { href: "/app/marketing", label: "Marketing" },
+  { href: "/app/tasks", label: "Tarefas" },
   { href: "/app/team", label: "Equipe" },
   { href: "/app/billing", label: "Planos" },
   { href: "/app/settings/llm", label: "Inteligência (IA)" },
