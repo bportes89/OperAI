@@ -5,16 +5,29 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { apiJson } from "../../../lib/api";
 import type { LlmSettings } from "../../../lib/types";
 
+// Modelos descontinuados pela Groq em 16/08/2026
+const DEPRECATED_GROQ_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+
 const PROVIDERS = [
   {
-    id: "groq",
-    name: "Groq",
-    blurb: "Bom para começar — rápido e costuma ter créditos gratuitos.",
-    keyUrl: "https://console.groq.com/keys",
+    id: "operai",
+    name: "OperAI (Modo Fácil)",
+    blurb: "Use a IA da OperAI — sem precisar criar conta em outro site. Recomendado para começar rapidamente.",
+    keyUrl: null,
+    isHosted: true,
     models: [
-      { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B (recomendado)" },
-      { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B (mais barato)" },
-      { id: "openai/gpt-oss-120b", label: "GPT OSS 120B" },
+      { id: "gpt-oss-120b", label: "GPT OSS 120B (recomendado)" },
+      { id: "gpt-oss-20b", label: "GPT OSS 20B (mais rápido)" },
+    ],
+  },
+  {
+    id: "groq",
+    name: "Groq (BYOK)",
+    blurb: "Use sua própria chave da Groq. Você controla o gasto diretamente com o provedor.",
+    keyUrl: "https://console.groq.com/keys",
+    warning: "ATENÇÃO: Groq (groq.com) é diferente de Grok (xAI/Elon Musk). Crie a chave em console.groq.com",
+    models: [
+      { id: "openai/gpt-oss-120b", label: "GPT OSS 120B (recomendado)" },
       { id: "openai/gpt-oss-20b", label: "GPT OSS 20B" },
       { id: "groq/compound", label: "Groq Compound (Sistema de IA)" },
       { id: "groq/compound-mini", label: "Groq Compound Mini (Sistema de IA)" },
@@ -48,8 +61,8 @@ export default function LlmSettingsPage() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState(1);
-  const [provider, setProvider] = useState("groq");
-  const [model, setModel] = useState("llama-3.3-70b-versatile");
+  const [provider, setProvider] = useState("operai");
+  const [model, setModel] = useState("gpt-oss-120b");
 
   const selected = useMemo(
     () => PROVIDERS.find((p) => p.id === provider) ?? PROVIDERS[0],
@@ -105,7 +118,23 @@ export default function LlmSettingsPage() {
       form.reset();
       await load();
     } catch (e) {
-      setError((e as Error).message);
+      const errorMsg = (e as Error).message;
+      // Traduzir erros técnicos comuns para português simples
+      let userFriendlyError = errorMsg;
+      
+      if (errorMsg.includes("Invalid API Key") || errorMsg.includes("invalid_api_key")) {
+        userFriendlyError = "A chave de API não é válida. Verifique se: (1) copiou a chave completa, (2) está usando o site correto (console.groq.com para Groq, não Grok/xAI), (3) a chave não foi revogada.";
+      } else if (errorMsg.includes("model_not_found") || errorMsg.includes("does not exist")) {
+        userFriendlyError = "O modelo selecionado não está mais disponível. Escolha outro modelo da lista — recomendamos o GPT OSS 120B.";
+      } else if (errorMsg.includes("rate limit") || errorMsg.includes("RateLimit")) {
+        userFriendlyError = "Você atingiu o limite de requisições do provedor. Aguarde alguns minutos ou verifique seu plano.";
+      } else if (errorMsg.includes("insufficient_quota") || errorMsg.includes("credit")) {
+        userFriendlyError = "Sua conta do provedor não tem créditos suficientes. Adicione créditos no site do provedor (ex: console.groq.com).";
+      } else if (errorMsg.includes("Network Error") || errorMsg.includes("fetch") || errorMsg.includes("connection")) {
+        userFriendlyError = "Problema de conexão. Verifique sua internet e tente novamente.";
+      }
+      
+      setError(userFriendlyError);
     } finally {
       setBusy(false);
     }
@@ -214,6 +243,12 @@ export default function LlmSettingsPage() {
             </label>
             <p style={{ opacity: 0.85, marginTop: -4 }}>{selected.blurb}</p>
 
+            {provider === "groq" && (
+              <div style={{ background: "#3a3a40", padding: 12, borderRadius: 8, marginBottom: 12 }}>
+                <strong>⚠️ {selected.warning}</strong>
+              </div>
+            )}
+
             <label>
               2. Qual modelo?
               <select
@@ -233,47 +268,58 @@ export default function LlmSettingsPage() {
               Deixe o recomendado se não tiver preferência.
             </p>
 
-            <div
-              style={{
-                border: "1px solid #3a3a40",
-                padding: 12,
-                borderRadius: 8,
-                marginBottom: 8,
-              }}
-            >
-              <strong>3. Pegue sua chave</strong>
-              <p style={{ margin: "8px 0", opacity: 0.85 }}>
-                Abra o site do provedor, entre na conta e crie uma API key.
-                Depois volte e cole abaixo.
-              </p>
-              <a
-                className="secondary"
-                href={selected.keyUrl}
-                target="_blank"
-                rel="noreferrer"
-                onClick={() => setStep(2)}
-              >
-                Abrir página de chaves ({selected.name})
-              </a>
-            </div>
+            {provider !== "operai" ? (
+              <>
+                <div
+                  style={{
+                    border: "1px solid #3a3a40",
+                    padding: 12,
+                    borderRadius: 8,
+                    marginBottom: 8,
+                  }}
+                >
+                  <strong>3. Pegue sua chave</strong>
+                  <p style={{ margin: "8px 0", opacity: 0.85 }}>
+                    Abra o site do provedor, entre na conta e crie uma API key.
+                    Depois volte e cole abaixo.
+                  </p>
+                  <a
+                    className="secondary"
+                    href={selected.keyUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={() => setStep(2)}
+                  >
+                    Abrir página de chaves ({selected.name})
+                  </a>
+                </div>
 
-            <label>
-              Cole a chave aqui
-              <input
-                name="api_key"
-                type="password"
-                required
-                minLength={8}
-                placeholder="Cole a chave gerada no site do provedor"
-                autoComplete="off"
-                onFocus={() => setStep(3)}
-              />
-            </label>
+                <label>
+                  Cole a chave aqui
+                  <input
+                    name="api_key"
+                    type="password"
+                    required
+                    minLength={8}
+                    placeholder="Cole a chave gerada no site do provedor"
+                    autoComplete="off"
+                    onFocus={() => setStep(3)}
+                  />
+                </label>
+              </>
+            ) : (
+              <div style={{ background: "#1a5f2a", padding: 16, borderRadius: 8, marginTop: 8 }}>
+                <strong>✓ Modo Fácil ativado</strong>
+                <p style={{ margin: "8px 0 0 0", opacity: 0.9 }}>
+                  Você não precisa criar chave nem sair do sistema. A IA já está pronta para usar.
+                </p>
+              </div>
+            )}
 
             <button className="primary" disabled={busy}>
               {busy
-                ? "Testando conexão…"
-                : "Testar e salvar (validamos antes de gravar)"}
+                ? "Salvando…"
+                : provider === "operai" ? "Ativar IA da OperAI" : "Testar e salvar (validamos antes de gravar)"}
             </button>
           </form>
         </article>
