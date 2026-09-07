@@ -11,7 +11,7 @@ import {
 const FLOATS = [
   { label: "BYOK", href: "#diferenciais", x: "8%", y: "22%", delay: "0s", depth: 18 },
   { label: "WhatsApp", href: "#funcionalidades", x: "78%", y: "18%", delay: "0.6s", depth: 28 },
-  { label: "CRM", href: "#funcionalidades", x: "86%", y: "62%", delay: "1.1s", depth: 22 },
+  { label: "Clientes", href: "#funcionalidades", x: "86%", y: "62%", delay: "1.1s", depth: 22 },
   { label: "Cobrança", href: "#casos-de-uso", x: "12%", y: "68%", delay: "1.7s", depth: 26 },
   { label: "Agentes", href: "#como-funciona", x: "48%", y: "12%", delay: "0.3s", depth: 14 },
 ];

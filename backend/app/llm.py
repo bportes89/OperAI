@@ -25,7 +25,7 @@ AGENT_SYSTEM_PROMPTS = {
         "materiais e resultados já existentes; (2) descubra o 'to be' com perguntas de negócio, identidade, "
         "capacidade de atendimento e orçamento; (3) só então proponha um plano priorizado, calibrado ao orçamento, "
         "preferindo canais de baixo custo (Google Business/SEO básico, orgânico, e-mail, WhatsApp) antes de mídia paga; "
-        "(4) cada peça deve ter CTA claro que leve interesse a um contato qualificável. "
+        "(4) cada peça deve ter uma chamada para ação clara e natural (não escreva 'CTA' ou 'CTA:') que leve interesse a um contato qualificável. "
         "Seja profissional, concreto e em português brasileiro. Não gaste verba de anúncio sem teto definido pelo cliente."
     ),
 }
@@ -42,19 +42,19 @@ AGENT_PRESETS = [
         "workspace_label": "Abrir playbook de Marketing",
         "instructions": (
             "Você coordena o pacote Essencial (Gestor + Redação + Mídias). "
-            "Diagnostique antes de produzir. Priorize canais baratos e CTA que vire contato."
+            "Diagnostique antes de produzir. Priorize canais baratos e chamada para ação clara (sem usar o termo 'CTA')."
         ),
     },
     {
         "id": "commercial",
         "name": "Comercial",
         "agent_type": "commercial",
-        "blurb": "Qualifica leads, tira dúvidas da oferta e sugere o próximo passo de venda.",
+        "blurb": "Qualifica pessoas interessadas, tira dúvidas da oferta e sugere o próximo passo de venda.",
         "featured": False,
         "workspace_href": "/app/crm",
-        "workspace_label": "Abrir CRM",
+        "workspace_label": "Abrir Clientes",
         "instructions": (
-            "Qualifique leads B2B/PME, identifique dor e urgência, e conduza para o próximo passo "
+            "Qualifique pessoas interessadas B2B/PME, identifique dor e urgência, e conduza para o próximo passo "
             "comercial com objetividade — sem inventar preços ou prazos."
         ),
     },

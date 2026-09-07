@@ -173,7 +173,7 @@ export default function LlmSettingsPage() {
           </div>
         </div>
         <p style={{ marginTop: 0, lineHeight: 1.55 }}>
-          A OperAI é a plataforma (agentes, WhatsApp, CRM). O custo das
+          A OperAI é a plataforma (agentes, WhatsApp, Clientes). O custo das
           respostas de IA fica na <strong>sua</strong> conta do provedor —
           assim você controla o gasto. É só criar uma chave no site do
           provedor e colar aqui. Não precisa ser técnico: siga os 3 passos.

@@ -8,10 +8,10 @@ import type { Opportunity } from "../../lib/types";
 
 const STAGES = [
   { id: "new", label: "Novos" },
-  { id: "qualified", label: "Qualificados" },
-  { id: "proposal", label: "Proposta" },
-  { id: "won", label: "Ganhos" },
-  { id: "lost", label: "Perdidos" },
+  { id: "qualified", label: "Em conversa" },
+  { id: "proposal", label: "Orçamento" },
+  { id: "won", label: "Fechado" },
+  { id: "lost", label: "Sem interesse" },
 ] as const;
 
 const CHANNEL_LABEL: Record<string, string> = {
@@ -66,7 +66,7 @@ export default function CrmPage() {
         }),
       });
       form.reset();
-      setMessage("Oportunidade adicionada ao pipeline.");
+      setMessage("Oportunidade adicionada ao funil.");
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -113,7 +113,7 @@ export default function CrmPage() {
     if (!editingId || !editing) return;
     if (
       !window.confirm(
-        `Remover “${editing.company}” do pipeline? Esta ação não desfaz.`,
+        `Remover “${editing.company}” do funil? Esta ação não desfaz.`,
       )
     ) {
       return;
@@ -180,7 +180,7 @@ export default function CrmPage() {
       <header>
         <div>
           <span>VENDAS</span>
-          <h1>CRM</h1>
+          <h1>Clientes</h1>
         </div>
         <Link className="secondary" href="/app/marketing">
           Marketing
@@ -198,12 +198,12 @@ export default function CrmPage() {
           <small>oportunidades abertas</small>
         </article>
         <article>
-          <span>Valor no pipeline</span>
+          <span>Valor no funil</span>
           <strong>{money(total)}</strong>
-          <small>sem ganhos/perdidos</small>
+          <small>sem fechados/sem interesse</small>
         </article>
         <article>
-          <span>Ganhos</span>
+          <span>Fechados</span>
           <strong>{items.filter((i) => i.stage === "won").length}</strong>
           <small>negócios fechados</small>
         </article>
@@ -212,8 +212,8 @@ export default function CrmPage() {
       <article className="panel" style={{ marginBottom: 18 }}>
         <div className="panel-title">
           <div>
-            <span>KANBAN</span>
-            <h2>Pipeline visual</h2>
+            <span>QUADRO</span>
+            <h2>Funil visual</h2>
           </div>
           <button type="button" onClick={() => void load()}>
             Atualizar
@@ -225,7 +225,7 @@ export default function CrmPage() {
         </p>
         {items.length === 0 ? (
           <div className="empty">
-            <strong>Pipeline vazio</strong>
+            <strong>Sem oportunidades ainda</strong>
             <p>
               Cadastre ao lado ou registre interesse no{" "}
               <Link href="/app/marketing">Marketing</Link>.
@@ -397,7 +397,7 @@ export default function CrmPage() {
                 disabled={busy}
                 onClick={() => void removeOpportunity()}
               >
-                Remover do pipeline
+                Remover do funil
               </button>
             </div>
           </form>
@@ -451,7 +451,7 @@ export default function CrmPage() {
             <input name="source_title" placeholder="Ex.: Post Convite WhatsApp" />
           </label>
           <button className="primary" disabled={busy}>
-            Adicionar ao pipeline
+            Adicionar ao funil
           </button>
         </form>
       </article>

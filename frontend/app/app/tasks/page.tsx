@@ -196,7 +196,7 @@ export default function TasksPage() {
       "whatsapp.reply": "WhatsApp",
       "finance.follow_up": "Cobrança",
       "marketing.campaign": "Campanha",
-      "marketing.handoff": "Lead",
+      "marketing.handoff": "Pessoa interessada",
       "marketing.crisis": "Crise",
     };
     return labels[type] || type;

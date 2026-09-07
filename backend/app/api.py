@@ -1191,7 +1191,7 @@ async def opportunity_from_inbox_thread(thread_id:str,data:InboxOpportunityIn,p:
         "opportunity":_opportunity_out(item),
         "thread_id":str(thread.id),
         "thread_status":thread.status,
-        "message":f"Oportunidade “{item.company}” criada no CRM (origem WhatsApp).",
+        "message":f"Oportunidade “{item.company}” criada em Clientes (origem WhatsApp).",
     }
 
 @router.get("/inbox/threads/{thread_id}/messages")
@@ -1740,31 +1740,31 @@ def _fallback_marketing_plan(diagnosis:dict,discovery:dict)->tuple[str,str,list[
         "## Plano Essencial (30 dias)\n\n"
         f"**Público:** {audience}\n"
         f"**Orçamento informado:** {budget}\n"
-        f"**Capacidade de leads:** {capacity}\n\n"
+        f"**Capacidade de contatos:** {capacity}\n\n"
         "### Prioridade de canais\n"
         "1. Perfil da empresa no Google + SEO básico (baixo custo, descoberta)\n"
         "2. Redes sociais orgânicas como vitrine (não como único vendedor)\n"
         "3. WhatsApp / e-mail para converter quem já demonstrou interesse\n"
         "4. Mídia paga só depois do orgânico estabilizar e com teto de gasto\n\n"
         "### Próximos passos\n"
-        "- Publicar 4 peças com CTA claro para contato\n"
-        "- Registrar todo interesse no CRM/Inbox\n"
+        "- Publicar 4 peças com chamada para ação clara (WhatsApp, orçamento, conversa)\n"
+        "- Registrar toda pessoa interessada em Clientes/WhatsApp\n"
         "- Revisar engajamento semanalmente com o Agente Gestor\n"
     )
     diff=discovery.get("differentiators") or "o diferencial da empresa"
     posts=[
         {"title":"Quem somos na prática","channel":"social","audience":audience,
          "content":f"Muita gente nos conhece pelas redes — poucos sabem {diff}. "
-                   f"Se isso faz sentido para você, responda este post ou chame no WhatsApp. CTA: falar com a equipe."},
+                   "Se isso faz sentido para você, responda este post ou chame no WhatsApp para conversarmos."},
         {"title":"Problema que resolvemos","channel":"social","audience":audience,
          "content":f"Se você se identifica com o desafio do nosso cliente ideal ({audience}), "
-                   "podemos ajudar com um próximo passo simples. CTA: pedir conversa / formulário."},
+                   "podemos ajudar com um próximo passo simples. Me chame no WhatsApp e eu te oriento."},
         {"title":"Prova de valor","channel":"email","audience":audience,
          "content":f"Assunto: um jeito direto de avançar. Corpo: com base no que já fazemos em {channels}, "
-                   f"propomos um caminho curto. Responda este e-mail para agendar. CTA: responder."},
+                   "propomos um caminho curto. Responda este e-mail para agendar uma conversa."},
         {"title":"Convite WhatsApp","channel":"whatsapp","audience":audience,
          "content":f"Oi! Vi seu interesse no nosso conteúdo. Com orçamento {budget} e capacidade {capacity}, "
-                   "posso te orientar no próximo passo sem enrolação. CTA: continuar a conversa."},
+                   "posso te orientar no próximo passo sem enrolação. Me diga a data e o que você precisa que eu te ajudo."},
     ]
     return summary,plan,posts
 
@@ -1811,9 +1811,9 @@ async def generate_marketing_playbook(p:Annotated[Principal,Depends(require_role
         "### RESUMO\n(um parágrafo do as-is)\n"
         "### PLANO\n(plano 30 dias com priorização de canais e investimento)\n"
         "### POSTS\n"
-        "1. Título | canal(social|email|whatsapp|google_ads) | público | texto com CTA\n"
+        "1. Título | canal(social|email|whatsapp|google_ads) | público | texto com chamada para ação (não escreva 'CTA' ou 'CTA:')\n"
         "2. ...\n3. ...\n4. ...\n"
-        "Se houver orçamento mensal > 0 na descoberta, inclua no máximo 1 peça google_ads (texto de anúncio de busca: título + descrição + CTA). "
+        "Se houver orçamento mensal > 0 na descoberta, inclua no máximo 1 peça google_ads (texto de anúncio de busca: título + descrição + chamada para ação, sem escrever 'CTA'). "
         "Não sugira Ads pagos se o orçamento for zero ou muito baixo.\n\n"
         f"DIAGNÓSTICO:\n{item.diagnosis}\n\nDESCOBERTA:\n{item.discovery}"
     )
@@ -1873,9 +1873,9 @@ async def regenerate_marketing_post(post_index:int,p:Annotated[Principal,Depends
     ch=str(current.get("channel") or "social")
     question=(
         "Reescreva UMA peça de marketing em português brasileiro. "
-        "Mantenha o canal e o público, melhore clareza e CTA qualificável.\n"
+        "Mantenha o canal e o público, melhore clareza e chamada para ação qualificável (sem escrever 'CTA' ou 'CTA:').\n"
         "Responda em UMA linha no formato:\n"
-        "Título | canal | público | texto com CTA\n"
+        "Título | canal | público | texto com chamada para ação (sem escrever 'CTA' ou 'CTA:')\n"
         f"Canal desejado: {ch}\n"
         f"Peça atual: {current}\n\n"
         f"DIAGNÓSTICO:\n{item.diagnosis}\n\nDESCOBERTA:\n{item.discovery}"
@@ -2034,7 +2034,7 @@ async def marketing_conversion_stats(p:Annotated[Principal,Depends(current_princ
 @router.post("/marketing/leads",status_code=201)
 async def create_marketing_lead(data:MarketingLeadIn,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER,Role.OPERATOR))],db:Db):
     await require_billing_access(p.organization_id,db)
-    if not data.consent_lgpd:raise HTTPException(422,"Consentimento LGPD é obrigatório para captar o lead")
+    if not data.consent_lgpd:raise HTTPException(422,"Consentimento LGPD é obrigatório para registrar a pessoa interessada")
     phone=_normalize_phone(data.phone)
     email=(data.email or "").strip().lower() or None
     if not phone and not email:raise HTTPException(422,"Informe telefone ou e-mail do interessado")
@@ -2106,7 +2106,7 @@ async def create_marketing_lead(data:MarketingLeadIn,p:Annotated[Principal,Depen
         created_by=p.user_id,
         idempotency_key=f"mkt-lead:{lead.id}",
         task_type="marketing.crisis" if crisis else "marketing.handoff",
-        title=("CRISE: " if crisis else "Lead: ")+data.contact_name[:70],
+        title=("CRISE: " if crisis else "Pessoa interessada: ")+data.contact_name[:70],
         priority="high",
         status="queued",
         input_data={
@@ -2120,7 +2120,7 @@ async def create_marketing_lead(data:MarketingLeadIn,p:Annotated[Principal,Depen
             "note":data.note,
             "consent_lgpd":True,
             "is_crisis":crisis,
-            "next_step":"Escalar para humano — não responder automaticamente" if crisis else "Qualificar no CRM e seguir no WhatsApp/comercial",
+            "next_step":"Escalar para humano — não responder automaticamente" if crisis else "Qualificar em Clientes e seguir no WhatsApp/comercial",
         },
     ))
     db.add(AuditLog(
@@ -2145,8 +2145,8 @@ async def create_marketing_lead(data:MarketingLeadIn,p:Annotated[Principal,Depen
 @router.post("/marketing/leads/{lead_id}/escalate")
 async def escalate_marketing_lead(lead_id:str,p:Annotated[Principal,Depends(require_roles(Role.OWNER,Role.ADMIN,Role.MANAGER,Role.OPERATOR))],db:Db):
     await require_billing_access(p.organization_id,db)
-    lead=await db.scalar(select(MarketingLead).where(and_(MarketingLead.id==parse_uuid(lead_id,"Lead"),MarketingLead.organization_id==p.organization_id)))
-    if not lead:raise HTTPException(404,"Lead not found")
+    lead=await db.scalar(select(MarketingLead).where(and_(MarketingLead.id==parse_uuid(lead_id,"Interesse"),MarketingLead.organization_id==p.organization_id)))
+    if not lead:raise HTTPException(404,"Interesse não encontrado")
     lead.is_crisis=True;lead.status="escalated"
     db.add(AgentTask(
         organization_id=p.organization_id,agent_id=None,created_by=p.user_id,
@@ -2230,9 +2230,9 @@ def _engagement_recommendation(views:int,clicks:int,likes:int,comments:int,best_
     if views==0 and likes==0:
         parts.append("Registre números reais das redes para sair do achismo.")
     elif ctr>=3:
-        parts.append("CTR forte — priorize CTAs parecidos e leve tráfego para WhatsApp/CRM.")
+        parts.append("CTR forte — priorize chamadas para ação parecidas e leve tráfego para WhatsApp/Clientes.")
     elif views>=100 and ctr<1:
-        parts.append("Alcance sem clique — revise CTA e horário de publicação.")
+        parts.append("Alcance sem clique — revise a chamada para ação e o horário de publicação.")
     else:
         parts.append("Mantenha cadência e teste um formato (carrossel/bastidor) na próxima semana.")
     if comments>likes*0.3 and comments>0:
@@ -2262,7 +2262,7 @@ def _upgrade_suggestion(*,package:str,campaigns:int,leads_7d:int,engagements:int
                 "Aceleração inclui tráfego pago sob o teto definido pelo dono.",
             ]
         else:
-            reasons=["Para Aceleração: avance o checklist SEO, defina teto de Ads (>0) e estabilize leads (3+ em 7 dias)."]
+            reasons=["Para Aceleração: avance o checklist SEO, defina teto de Ads (>0) e estabilize interessados (3+ em 7 dias)."]
     else:
         reasons=["Pacote Aceleração ativo — foque otimização de campanhas dentro do teto."]
     return {
@@ -2380,7 +2380,7 @@ async def analytics_overview(p:Annotated[Principal,Depends(current_principal)],d
     audits=(await db.scalars(select(AuditLog).where(and_(AuditLog.organization_id==p.organization_id,AuditLog.created_at>=since)).order_by(AuditLog.created_at.asc()))).all()
 
     stage_order=["new","qualified","proposal","won","lost"]
-    stage_labels={"new":"Novos","qualified":"Qualificados","proposal":"Proposta","won":"Ganhos","lost":"Perdidos"}
+    stage_labels={"new":"Novos","qualified":"Em conversa","proposal":"Orçamento","won":"Fechado","lost":"Sem interesse"}
     stage_counts={s:0 for s in stage_order}
     for opp in opportunities:
         key=opp.stage if opp.stage in stage_counts else "new"
@@ -2435,10 +2435,10 @@ def _human_activity(action:str,resource:str,detail:str|None)->tuple[str,str]:
         except ValueError:
             money_hint=d
     labels={
-        "opportunity.created":("Nova oportunidade no CRM",d or "Negócio registrado"),
-        "opportunity.stage_changed":("Etapa do CRM atualizada",d.replace(":"," → ") if d else "Kanban"),
-        "opportunity.updated":("Oportunidade editada no CRM",d or "Dados atualizados"),
-        "opportunity.deleted":("Oportunidade removida do CRM",d or "Removida"),
+        "opportunity.created":("Nova oportunidade em Clientes",d or "Negócio registrado"),
+        "opportunity.stage_changed":("Etapa de Clientes atualizada",d.replace(":"," → ") if d else "Quadro"),
+        "opportunity.updated":("Oportunidade editada em Clientes",d or "Dados atualizados"),
+        "opportunity.deleted":("Oportunidade removida de Clientes",d or "Removida"),
         "agent.created":("Agente adicionado à equipe",d or "Novo agente"),
         "agent.status_changed":("Status de agente atualizado",d.replace(":"," → ") if d else "Alteração de status"),
         "agent.queried":("Consulta a um agente",d or "Pergunta respondida"),
@@ -2612,10 +2612,10 @@ async def seed_nexus(p:Annotated[Principal,Depends(require_roles(Role.OWNER))],d
     existing=(await db.scalars(select(Agent).where(Agent.organization_id==p.organization_id))).all()
     created=[]
     defaults=[
-        ("Comercial Nexus","commercial","Você qualifica leads B2B e agenda demos OperAI."),
+        ("Comercial Nexus","commercial","Você qualifica pessoas interessadas B2B e agenda demos OperAI."),
         ("WhatsApp Nexus","whatsapp","Você atende clientes no WhatsApp com respostas curtas e úteis."),
         ("Financeiro Nexus","finance","Você acompanha cobranças e explica status de recebíveis."),
-        ("Marketing Nexus","marketing","Você é o Agente Gestor Essencial: diagnostique, descubra e só então proponha plano e peças com CTA."),
+        ("Marketing Nexus","marketing","Você é o Agente Gestor Essencial: diagnostique, descubra e só então proponha plano e peças com chamada para ação (sem escrever 'CTA')."),
     ]
     for name,agent_type,instructions in defaults:
         if any(a.name==name for a in existing):continue

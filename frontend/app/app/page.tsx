@@ -114,9 +114,9 @@ export default function DashboardPage() {
       {analytics ? (
         <div className="metrics">
           <article>
-            <span>Pipeline comercial</span>
+            <span>Funil de vendas</span>
             <strong>{money(analytics.crm.pipeline_cents)}</strong>
-            <small>{analytics.crm.opportunities} oportunidades no CRM</small>
+            <small>{analytics.crm.opportunities} oportunidades em Clientes</small>
           </article>
           <article>
             <span>Agentes ativos</span>
@@ -140,7 +140,7 @@ export default function DashboardPage() {
           <article className="panel">
             <div className="panel-title">
               <div>
-                <span>CRM</span>
+                <span>CLIENTES</span>
                 <h2>Funil de oportunidades</h2>
               </div>
             </div>
@@ -154,9 +154,9 @@ export default function DashboardPage() {
             ) : (
               <div className="empty">
                 <strong>Funil ainda vazio</strong>
-                <p>Cadastre oportunidades no CRM para ver o funil.</p>
+                <p>Cadastre oportunidades em Clientes para ver o funil.</p>
                 <Link className="secondary" href="/app/crm">
-                  Abrir CRM
+                  Abrir Clientes
                 </Link>
               </div>
             )}
@@ -180,7 +180,7 @@ export default function DashboardPage() {
             ) : (
               <div className="empty">
                 <strong>Sem movimento ainda</strong>
-                <p>Use agentes, CRM ou Marketing para gerar atividade.</p>
+                <p>Use agentes, Clientes ou Marketing para gerar atividade.</p>
               </div>
             )}
           </article>
@@ -222,7 +222,7 @@ export default function DashboardPage() {
                   <strong>{analytics.marketing?.interests_7d ?? 0}</strong>
                 </div>
                 <div>
-                  <span>Leads virando CRM (7d)</span>
+                  <span>Interesses virando Clientes (7d)</span>
                   <strong>{analytics.marketing?.opportunities_7d ?? 0}</strong>
                 </div>
               </div>

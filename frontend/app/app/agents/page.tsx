@@ -7,6 +7,13 @@ import { agentLabel } from "../../lib/format";
 import { MarkdownLite } from "../../lib/markdown";
 import type { Agent, AgentPreset, ChatResult } from "../../lib/types";
 
+const AGENT_STATUS_LABELS: Record<string, string> = {
+  draft: "Rascunho",
+  active: "Ativo",
+  inactive: "Pausado",
+  disabled: "Desativado",
+};
+
 export default function AgentsPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [presets, setPresets] = useState<AgentPreset[]>([]);
@@ -149,13 +156,13 @@ export default function AgentsPage() {
             <h2>Agente Gestor — o cérebro do Marketing</h2>
           </div>
           <span className={`agent-status ${gestor?.status ?? "draft"}`}>
-            {gestor ? gestor.status : "preparando…"}
+            {gestor ? (AGENT_STATUS_LABELS[gestor.status] ?? gestor.status) : "preparando…"}
           </span>
         </div>
         <p style={{ marginTop: 0, lineHeight: 1.55, opacity: 0.9 }}>
           Ele não começa produzindo posts. Primeiro diagnostica o que já existe,
           depois descobre o que a empresa quer, e só então monta plano e peças
-          com CTA. O fluxo guiado fica no Marketing; aqui você conversa e
+          com chamada para ação. O fluxo guiado fica no Marketing; aqui você conversa e
           ativa o restante da equipe.
         </p>
         <div className="proposal-actions" style={{ flexWrap: "wrap", gap: 8 }}>
@@ -217,11 +224,11 @@ export default function AgentsPage() {
                     </small>
                   </div>
                   <span className={`agent-status ${agent.status}`}>
-                    {agent.status}
+                    {AGENT_STATUS_LABELS[agent.status] ?? agent.status}
                   </span>
                   <p>
                     {agent.agent_type === "marketing"
-                      ? "Diagnostica → descobre → planeja → peças com CTA."
+                      ? "Diagnostica → descobre → planeja → peças com chamada para ação."
                       : agent.instructions.length > 140
                         ? `${agent.instructions.slice(0, 140)}…`
                         : agent.instructions}

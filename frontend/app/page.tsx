@@ -15,7 +15,7 @@ const STEPS = [
   {
     n: "03",
     title: "Ative a operação",
-    text: "Ligue os agentes, conecte o WhatsApp e opere CRM, cobrança e marketing no mesmo ambiente.",
+    text: "Ligue os agentes, conecte o WhatsApp e opere Clientes, cobrança e marketing no mesmo ambiente.",
   },
   {
     n: "→",
@@ -38,7 +38,7 @@ const FEATURES = [
     text: "Conversas centralizadas, com agentes preparados para responder no tom da operação.",
   },
   {
-    title: "CRM e cobrança",
+    title: "Clientes e cobrança",
     text: "Oportunidades, títulos e baixas no mesmo fluxo operacional.",
   },
   {
@@ -64,7 +64,7 @@ const DIFFS = [
   },
   {
     label: "Escopo",
-    ours: "WhatsApp, CRM, cobrança e marketing juntos",
+    ours: "WhatsApp, Clientes, cobrança e marketing juntos",
     theirs: "Ferramentas isoladas e integrações frágeis",
   },
   {
@@ -111,7 +111,7 @@ const RESULTS = [
   },
   {
     quote:
-      "CRM, cobrança e agentes no mesmo lugar reduziram o vai-e-vem entre ferramentas.",
+      "Clientes, cobrança e agentes no mesmo lugar reduziram o vai-e-vem entre ferramentas.",
     who: "Gestão · time comercial enxuto",
   },
 ];
@@ -176,7 +176,7 @@ const PLANS = [
     summary: "Operação completa: vendas, WhatsApp, cobrança e marketing.",
     items: [
       "4 agentes especializados",
-      "CRM + cobrança + campanhas",
+      "Clientes + cobrança + campanhas",
       "Até 5 usuários",
       "BYOK incluso",
     ],
@@ -262,7 +262,7 @@ export default function LandingPage() {
                 </div>
                 <div className="lp-panel-line">
                   <strong>Comercial</strong>
-                  <em>Qualificação com contexto do CRM</em>
+                  <em>Qualificação com contexto de Clientes</em>
                 </div>
               </div>
             </div>
@@ -275,7 +275,7 @@ export default function LandingPage() {
         <div className="lp-section-head">
           <h2>Ferramentas demais. Contexto de menos.</h2>
           <p>
-            PME cresce com WhatsApp, planilha, CRM e cobrança em silos. A IA
+            PME cresce com WhatsApp, planilha, clientes e cobrança em silos. A IA
             genérica não conhece a política da empresa — e o custo de tokens
             vira surpresa.
           </p>
@@ -294,7 +294,7 @@ export default function LandingPage() {
           <h2>Uma plataforma. Uma operação coerente.</h2>
           <p>
             A OperAI reúne agentes, base de conhecimento e fluxos de WhatsApp,
-            CRM, cobrança e marketing — com BYOK para a empresa mandar na
+            Clientes, cobrança e marketing — com BYOK para a empresa mandar na
             inteligência.
           </p>
         </div>

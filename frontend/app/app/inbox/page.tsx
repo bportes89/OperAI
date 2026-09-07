@@ -333,7 +333,7 @@ export default function InboxPage() {
       setCrmOpen(false);
       setMessage(
         result.message ||
-          `Oportunidade “${result.opportunity.company}” criada no CRM.`,
+          `Oportunidade “${result.opportunity.company}” criada em Clientes.`,
       );
     } catch (e) {
       setError((e as Error).message);
@@ -530,10 +530,10 @@ export default function InboxPage() {
                   disabled={busy}
                   onClick={() => setCrmOpen((v) => !v)}
                 >
-                  {crmOpen ? "Cancelar CRM" : "Criar no CRM"}
+                  {crmOpen ? "Cancelar Clientes" : "Criar em Clientes"}
                 </button>
                 <Link className="secondary" href="/app/crm">
-                  Abrir CRM
+                  Abrir Clientes
                 </Link>
               </div>
               {crmOpen && activeThread && (
@@ -553,7 +553,7 @@ export default function InboxPage() {
                     nesta conversa.
                   </p>
                   <label>
-                    Empresa / lead
+                    Empresa / pessoa interessada
                     <input
                       name="company"
                       defaultValue={activeThread.contact_name}
@@ -572,7 +572,7 @@ export default function InboxPage() {
                     />
                   </label>
                   <button className="primary" disabled={busy} type="submit">
-                    {busy ? "Criando…" : "Salvar no pipeline"}
+                    {busy ? "Criando…" : "Salvar no funil"}
                   </button>
                 </form>
               )}

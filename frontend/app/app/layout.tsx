@@ -17,7 +17,7 @@ const NAV = [
   { href: "/app/agents", label: "Agentes" },
   { href: "/app/knowledge", label: "Base da empresa" },
   { href: "/app/inbox", label: "WhatsApp" },
-  { href: "/app/crm", label: "CRM" },
+  { href: "/app/crm", label: "Clientes" },
   { href: "/app/finance", label: "Cobrança" },
   { href: "/app/marketing", label: "Marketing" },
   { href: "/app/tasks", label: "Tarefas" },

@@ -42,6 +42,11 @@ const CHANNEL_LABEL: Record<string, string> = {
   meta_ads: "Meta Ads",
 };
 
+const LEAD_STATUS_LABELS: Record<string, string> = {
+  handed_off: "Encaminhado",
+  escalated: "Escalado",
+};
+
 function interestChannel(channel: string) {
   if (channel === "whatsapp" || channel === "email") return channel;
   return "social";
@@ -309,7 +314,7 @@ export default function MarketingPage() {
     if (interestFor !== key) {
       return (
         <button type="button" onClick={() => setInterestFor(key)}>
-          Registrar interesse → CRM
+          Registrar pessoa interessada → Clientes
         </button>
       );
     }
@@ -575,12 +580,12 @@ export default function MarketingPage() {
             <small>conteúdo → pessoa</small>
           </article>
           <article>
-            <span>Leads com contato</span>
+            <span>Interessados com contato</span>
             <strong>{conversion.leads_with_contact}</strong>
             <small>telefone ou e-mail</small>
           </article>
           <article>
-            <span>Oportunidades CRM</span>
+            <span>Oportunidades em Clientes</span>
             <strong>{conversion.opportunities}</strong>
             <small>handoff comercial</small>
           </article>
@@ -598,7 +603,7 @@ export default function MarketingPage() {
             </div>
             <p style={{ marginTop: 0, opacity: 0.8 }}>
               Gestor + Redação + Mídias. Depois do plano, registre interesse e o
-              lead vai para o CRM.
+              interessado vai para Clientes.
             </p>
             <div className="proposal-actions" style={{ flexWrap: "wrap" }}>
               {WIZARD_STEPS.map((s, i) => (
@@ -827,7 +832,7 @@ export default function MarketingPage() {
                 <div className="panel-title">
                   <div>
                     <span>REDAÇÃO + MÍDIAS</span>
-                    <h2>Peças com CTA</h2>
+                    <h2>Peças com chamada para ação</h2>
                   </div>
                 </div>
                 {(playbook?.posts?.length ?? 0) === 0 ? (
@@ -903,7 +908,7 @@ export default function MarketingPage() {
                     </small>
                   </div>
                   <span className={`finance-status ${item.status}`}>
-                    {item.status}
+                    {CAMPAIGN_STATUS_LABELS[item.status] ?? item.status}
                   </span>
                   <p>{item.content}</p>
                   <div className="campaign-metrics">
@@ -988,16 +993,16 @@ export default function MarketingPage() {
             <div className="panel-title">
               <div>
                 <span>FUNIL</span>
-                <h2>Conteúdo → interesse → CRM</h2>
+                <h2>Conteúdo → interesse → Clientes</h2>
               </div>
             </div>
             <p style={{ opacity: 0.85 }}>
               Cada interesse vira contato + oportunidade em estágio{" "}
-              <strong>new</strong> e tarefa de handoff para o agente comercial
+              <strong>Novos</strong> e tarefa de handoff para o agente comercial
               ou WhatsApp.
             </p>
             <div className="proposal-actions">
-              <Link href="/app/crm">Abrir CRM</Link>
+              <Link href="/app/crm">Abrir Clientes</Link>
               <Link href="/app/inbox">Abrir Inbox</Link>
             </div>
             {conversion && (
@@ -1012,16 +1017,16 @@ export default function MarketingPage() {
           <article className="panel">
             <div className="panel-title">
               <div>
-                <span>LEADS</span>
-                <h2>Interesses registrados</h2>
+                <span>INTERESSADOS</span>
+                <h2>Pessoas interessadas</h2>
               </div>
             </div>
             {leads.length === 0 ? (
               <div className="empty">
                 <strong>Nenhum interesse ainda</strong>
                 <p>
-                  Nas peças ou campanhas, use “Registrar interesse → CRM” quando
-                  alguém engajar.
+                  Nas peças ou campanhas, use “Registrar pessoa interessada →
+                  Clientes” quando alguém engajar.
                 </p>
               </div>
             ) : (
@@ -1034,7 +1039,7 @@ export default function MarketingPage() {
                     </small>
                   </div>
                   <span className={`finance-status ${lead.status}`}>
-                    {lead.status}
+                    {LEAD_STATUS_LABELS[lead.status] ?? lead.status}
                   </span>
                   <p>
                     {[lead.phone, lead.email].filter(Boolean).join(" · ") ||
@@ -1283,7 +1288,7 @@ export default function MarketingPage() {
                 </small>
               </article>
               <article>
-                <span>Interesses → CRM</span>
+                <span>Interesses → Clientes</span>
                 <strong>{growth.conversion_7d.interests}</strong>
                 <small>
                   {growth.conversion_7d.opportunities} oportunidades
