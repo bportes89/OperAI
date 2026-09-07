@@ -71,6 +71,13 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    const onChanged = () => void refreshOnboarding();
+    window.addEventListener("operai:onboarding-changed", onChanged);
+    return () =>
+      window.removeEventListener("operai:onboarding-changed", onChanged);
+  }, [refreshOnboarding]);
+
+  useEffect(() => {
     setMenuOpen(false);
   }, [pathname]);
 

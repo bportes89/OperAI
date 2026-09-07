@@ -44,6 +44,22 @@ export default function CrmPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const onUpdated = () => void load();
+    const onFocus = () => void load();
+    const onVisible = () => {
+      if (!document.hidden) void load();
+    };
+    window.addEventListener("operai:crm-updated", onUpdated);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("operai:crm-updated", onUpdated);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [load]);
+
   const editing = items.find((i) => i.id === editingId) ?? null;
 
   async function createOpportunity(event: FormEvent<HTMLFormElement>) {

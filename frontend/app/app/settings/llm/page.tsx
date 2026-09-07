@@ -95,6 +95,19 @@ export default function LlmSettingsPage() {
   }, [load]);
 
   useEffect(() => {
+    const onFocus = () => void load();
+    const onVisible = () => {
+      if (!document.hidden) void load();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [load]);
+
+  useEffect(() => {
     const first = selected.models[0]?.id;
     if (first && !selected.models.some((m) => m.id === model)) {
       setModel(first);
@@ -129,6 +142,7 @@ export default function LlmSettingsPage() {
       setStep(4);
       form.reset();
       await load();
+      window.dispatchEvent(new CustomEvent("operai:onboarding-changed"));
     } catch (e) {
       const errorMsg = (e as Error).message;
       let userFriendlyError = errorMsg;

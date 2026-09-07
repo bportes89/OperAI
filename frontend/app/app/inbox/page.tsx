@@ -64,6 +64,7 @@ export default function InboxPage() {
           step: "whatsapp",
         }),
       });
+      window.dispatchEvent(new CustomEvent("operai:onboarding-changed"));
     } catch {
       /* optional */
     }
@@ -335,6 +336,7 @@ export default function InboxPage() {
         result.message ||
           `Oportunidade “${result.opportunity.company}” criada em Clientes.`,
       );
+      window.dispatchEvent(new CustomEvent("operai:crm-updated"));
     } catch (e) {
       setError((e as Error).message);
     } finally {

@@ -50,6 +50,7 @@ export default function KnowledgePage() {
         method: "PATCH",
         body: JSON.stringify({ checklist: { faq: true }, step: "faq" }),
       });
+      window.dispatchEvent(new CustomEvent("operai:onboarding-changed"));
     } catch {
       /* optional — checklist real vem da detecção */
     }

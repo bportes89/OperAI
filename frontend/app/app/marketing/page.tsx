@@ -107,6 +107,19 @@ export default function MarketingPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const onFocus = () => void load();
+    const onVisible = () => {
+      if (!document.hidden) void load();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [load]);
+
   async function saveDiagnosis(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
@@ -298,6 +311,7 @@ export default function MarketingPage() {
       });
       form.reset();
       setInterestFor(null);
+      window.dispatchEvent(new CustomEvent("operai:crm-updated"));
       await load();
       setView("conversion");
     } catch (e) {
