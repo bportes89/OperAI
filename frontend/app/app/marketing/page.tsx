@@ -47,6 +47,77 @@ const LEAD_STATUS_LABELS: Record<string, string> = {
   escalated: "Escalado",
 };
 
+type VocabMode = "calm" | "direct";
+
+type DiagnosisKey =
+  | "channels_active"
+  | "content_types"
+  | "frequency"
+  | "engagement_notes"
+  | "brand_assets"
+  | "commercial_results";
+
+const DIAGNOSIS_QUESTIONS: Array<{
+  key: DiagnosisKey;
+  label: string;
+  kind: "textarea" | "input";
+  required?: boolean;
+  placeholder?: string;
+  help?: string;
+  quickFill?: string;
+}> = [
+  {
+    key: "channels_active",
+    label: "Quais canais você usa hoje?",
+    kind: "textarea",
+    required: true,
+    placeholder:
+      "Ex.: Instagram (@...), WhatsApp Business, Google Business Profile, site…",
+    help: "Liste onde você já aparece e onde as pessoas te chamam para pedir orçamento.",
+  },
+  {
+    key: "content_types",
+    label: "Que tipo de conteúdo você publica?",
+    kind: "textarea",
+    required: true,
+    placeholder: "Ex.: fotos de produtos, bastidores, promoções, depoimentos…",
+    help: "Pode ser simples. O objetivo é entender o que já existe hoje.",
+  },
+  {
+    key: "frequency",
+    label: "Com que frequência você publica?",
+    kind: "input",
+    required: true,
+    placeholder: "Ex.: 2–3 vezes por semana (sem calendário fixo)",
+    help: "Se varia, responda com uma média.",
+  },
+  {
+    key: "engagement_notes",
+    label: "Você tem números de engajamento?",
+    kind: "textarea",
+    placeholder:
+      "Ex.: seguidores, alcance médio, curtidas, cliques no link, mensagens por semana…",
+    help: "Se não souber, pode dizer “não sei” — a plataforma funciona mesmo assim.",
+    quickFill: "Não sei informar agora.",
+  },
+  {
+    key: "brand_assets",
+    label: "Tem algum material de marca para anexar aqui?",
+    kind: "textarea",
+    placeholder:
+      "Ex.: link do logo, paleta, mensagens prontas, cardápio, fotos, promoções…",
+    help: "O kit de marca da Base já entra no plano. Use aqui só o que for específico desta campanha.",
+  },
+  {
+    key: "commercial_results",
+    label: "Quais resultados comerciais o marketing gera hoje?",
+    kind: "textarea",
+    placeholder:
+      "Ex.: pedidos por indicação, mensagens no WhatsApp, poucas vendas via Instagram…",
+    help: "Se não tiver números, descreva a sensação geral (o que funciona e o que não).",
+  },
+];
+
 function interestChannel(channel: string) {
   if (channel === "whatsapp" || channel === "email") return channel;
   return "social";
@@ -73,6 +144,30 @@ export default function MarketingPage() {
     "wizard" | "campaigns" | "conversion" | "governance" | "growth"
   >("wizard");
   const [interestFor, setInterestFor] = useState<string | null>(null);
+  const [vocabMode, setVocabMode] = useState<VocabMode>("calm");
+  const [diagnosisIndex, setDiagnosisIndex] = useState(0);
+  const [diagnosisDirty, setDiagnosisDirty] = useState(false);
+  const [diagnosisDraft, setDiagnosisDraft] = useState<
+    Record<DiagnosisKey, string>
+  >({
+    channels_active: "",
+    content_types: "",
+    frequency: "",
+    engagement_notes: "",
+    brand_assets: "",
+    commercial_results: "",
+  });
+  const [discoveryDirty, setDiscoveryDirty] = useState(false);
+  const [discoveryDraft, setDiscoveryDraft] = useState<Record<string, string>>({
+    competitors: "",
+    differentiators: "",
+    ideal_customer: "",
+    mission_values: "",
+    brand_avoid: "",
+    lead_capacity: "",
+    seasonality: "",
+    monthly_budget: "",
+  });
 
   const load = useCallback(async () => {
     try {
@@ -120,17 +215,61 @@ export default function MarketingPage() {
     };
   }, [load]);
 
-  async function saveDiagnosis(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem("operai_vocab_mode");
+    if (raw === "direct" || raw === "calm") setVocabMode(raw);
+  }, []);
+
+  useEffect(() => {
+    if (!playbook) return;
+    if (!diagnosisDirty) {
+      const d = playbook.diagnosis ?? {};
+      const brandAssets =
+        String(d.brand_assets || "").trim() ||
+        [
+          brandKit?.logo_url,
+          brandKit?.notes,
+          brandKit?.primary_color &&
+            `cores ${brandKit.primary_color}${brandKit.secondary_color ? ` / ${brandKit.secondary_color}` : ""}`,
+        ]
+          .filter(Boolean)
+          .join("\n") ||
+        "";
+      setDiagnosisDraft({
+        channels_active: String(d.channels_active || ""),
+        content_types: String(d.content_types || ""),
+        frequency: String(d.frequency || ""),
+        engagement_notes: String(d.engagement_notes || ""),
+        brand_assets: brandAssets,
+        commercial_results: String(d.commercial_results || ""),
+      });
+    }
+    if (!discoveryDirty) {
+      const disc = playbook.discovery ?? {};
+      setDiscoveryDraft({
+        competitors: String(disc.competitors || ""),
+        differentiators: String(disc.differentiators || ""),
+        ideal_customer: String(disc.ideal_customer || ""),
+        mission_values: String(disc.mission_values || ""),
+        brand_avoid: String(disc.brand_avoid || brandKit?.avoid || ""),
+        lead_capacity: String(disc.lead_capacity || ""),
+        seasonality: String(disc.seasonality || ""),
+        monthly_budget: String(disc.monthly_budget || ""),
+      });
+    }
+  }, [playbook, brandKit, diagnosisDirty, discoveryDirty]);
+
+  async function saveDiagnosis() {
     setBusy(true);
     setError("");
-    const data = Object.fromEntries(new FormData(event.currentTarget));
     try {
       const pb = await apiJson<MarketingPlaybook>(
         "/api/v1/marketing/playbook/diagnosis",
-        { method: "PUT", body: JSON.stringify(data) },
+        { method: "PUT", body: JSON.stringify(diagnosisDraft) },
       );
       setPlaybook(pb);
+      setDiagnosisDirty(false);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -142,13 +281,13 @@ export default function MarketingPage() {
     event.preventDefault();
     setBusy(true);
     setError("");
-    const data = Object.fromEntries(new FormData(event.currentTarget));
     try {
       const pb = await apiJson<MarketingPlaybook>(
         "/api/v1/marketing/playbook/discovery",
-        { method: "PUT", body: JSON.stringify(data) },
+        { method: "PUT", body: JSON.stringify(discoveryDraft) },
       );
       setPlaybook(pb);
+      setDiscoveryDirty(false);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -529,15 +668,6 @@ export default function MarketingPage() {
 
   const step = playbook?.step ?? "diagnosis";
   const current = stepIndex(step);
-  const d = playbook?.diagnosis ?? {};
-  const disc = playbook?.discovery ?? {};
-  const brandAssetsDefault =
-    d.brand_assets ||
-    [brandKit?.logo_url, brandKit?.notes, brandKit?.primary_color && `cores ${brandKit.primary_color}${brandKit.secondary_color ? ` / ${brandKit.secondary_color}` : ""}`]
-      .filter(Boolean)
-      .join("\n") ||
-    "";
-  const brandAvoidDefault = disc.brand_avoid || brandKit?.avoid || "";
 
   return (
     <>
@@ -657,60 +787,166 @@ export default function MarketingPage() {
                   <h2>Diagnóstico inicial</h2>
                 </div>
               </div>
-              <form onSubmit={saveDiagnosis}>
-                <label>
-                  Canais ativos hoje
-                  <textarea
-                    name="channels_active"
-                    required
-                    minLength={2}
-                    defaultValue={d.channels_active}
-                  />
-                </label>
-                <label>
-                  Tipo de conteúdo publicado
-                  <textarea
-                    name="content_types"
-                    required
-                    minLength={2}
-                    defaultValue={d.content_types}
-                  />
-                </label>
-                <label>
-                  Frequência
-                  <input
-                    name="frequency"
-                    required
-                    minLength={2}
-                    defaultValue={d.frequency}
-                  />
-                </label>
-                <label>
-                  Dados de engajamento
-                  <textarea
-                    name="engagement_notes"
-                    defaultValue={d.engagement_notes}
-                  />
-                </label>
-                <label>
-                  Materiais de marca (complementa o kit)
-                  <textarea
-                    name="brand_assets"
-                    defaultValue={brandAssetsDefault}
-                    placeholder="O kit na Base já entra no plano; aqui só o que for específico deste diagnóstico"
-                  />
-                </label>
-                <label>
-                  Resultados comerciais do marketing
-                  <textarea
-                    name="commercial_results"
-                    defaultValue={d.commercial_results}
-                  />
-                </label>
-                <button className="primary" disabled={busy}>
-                  Salvar e ir à descoberta
+              <div className="proposal-actions" style={{ flexWrap: "wrap" }}>
+                <span className="finance-status paid">Explicações</span>
+                <button
+                  type="button"
+                  className={vocabMode === "calm" ? "primary" : undefined}
+                  onClick={() => {
+                    setVocabMode("calm");
+                    window.localStorage.setItem("operai_vocab_mode", "calm");
+                  }}
+                >
+                  Me explica com calma
                 </button>
-              </form>
+                <button
+                  type="button"
+                  className={vocabMode === "direct" ? "primary" : undefined}
+                  onClick={() => {
+                    setVocabMode("direct");
+                    window.localStorage.setItem("operai_vocab_mode", "direct");
+                  }}
+                >
+                  Direto ao ponto
+                </button>
+              </div>
+
+              {diagnosisIndex >= DIAGNOSIS_QUESTIONS.length ? (
+                <>
+                  <p style={{ marginTop: 12, opacity: 0.85 }}>
+                    Revise antes de salvar. Você pode voltar e ajustar qualquer resposta.
+                  </p>
+                  <div style={{ display: "grid", gap: 12 }}>
+                    {DIAGNOSIS_QUESTIONS.map((q, idx) => (
+                      <div
+                        key={q.key}
+                        style={{
+                          display: "grid",
+                          gap: 6,
+                          padding: 12,
+                          border: "1px solid rgba(255,255,255,0.08)",
+                          borderRadius: 12,
+                        }}
+                      >
+                        <div className="proposal-actions" style={{ justifyContent: "space-between" }}>
+                          <strong>{q.label}</strong>
+                          <button
+                            type="button"
+                            onClick={() => setDiagnosisIndex(idx)}
+                          >
+                            Editar
+                          </button>
+                        </div>
+                        <p style={{ margin: 0, whiteSpace: "pre-wrap", opacity: 0.9 }}>
+                          {diagnosisDraft[q.key] || "—"}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="proposal-actions" style={{ marginTop: 12 }}>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setDiagnosisIndex(DIAGNOSIS_QUESTIONS.length - 1)}
+                    >
+                      Voltar
+                    </button>
+                    <button
+                      className="primary"
+                      type="button"
+                      disabled={
+                        busy ||
+                        diagnosisDraft.channels_active.trim().length < 2 ||
+                        diagnosisDraft.content_types.trim().length < 2 ||
+                        diagnosisDraft.frequency.trim().length < 2
+                      }
+                      onClick={() => void saveDiagnosis()}
+                    >
+                      {busy ? "Salvando…" : "Salvar e ir à descoberta"}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                (() => {
+                  const q = DIAGNOSIS_QUESTIONS[diagnosisIndex];
+                  const value = diagnosisDraft[q.key] ?? "";
+                  const min = q.required ? 2 : 0;
+                  const canContinue = value.trim().length >= min;
+                  return (
+                    <>
+                      <p style={{ marginTop: 12, marginBottom: 6, opacity: 0.85 }}>
+                        Pergunta {diagnosisIndex + 1} de {DIAGNOSIS_QUESTIONS.length}
+                      </p>
+                      <label>
+                        {q.label}
+                        {q.kind === "input" ? (
+                          <input
+                            value={value}
+                            placeholder={q.placeholder}
+                            onChange={(e) => {
+                              setDiagnosisDirty(true);
+                              setDiagnosisDraft((prev) => ({
+                                ...prev,
+                                [q.key]: e.target.value,
+                              }));
+                            }}
+                          />
+                        ) : (
+                          <textarea
+                            value={value}
+                            placeholder={q.placeholder}
+                            onChange={(e) => {
+                              setDiagnosisDirty(true);
+                              setDiagnosisDraft((prev) => ({
+                                ...prev,
+                                [q.key]: e.target.value,
+                              }));
+                            }}
+                          />
+                        )}
+                      </label>
+                      {vocabMode === "calm" && q.help && (
+                        <p style={{ marginTop: 0, opacity: 0.8 }}>{q.help}</p>
+                      )}
+                      <div className="proposal-actions" style={{ flexWrap: "wrap" }}>
+                        {q.quickFill && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDiagnosisDirty(true);
+                              setDiagnosisDraft((prev) => ({
+                                ...prev,
+                                [q.key]: q.quickFill ?? "",
+                              }));
+                            }}
+                          >
+                            Não sei
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          disabled={busy || diagnosisIndex === 0}
+                          onClick={() => setDiagnosisIndex((prev) => Math.max(0, prev - 1))}
+                        >
+                          Voltar
+                        </button>
+                        <button
+                          type="button"
+                          className="primary"
+                          disabled={busy || !canContinue}
+                          onClick={() =>
+                            setDiagnosisIndex((prev) =>
+                              Math.min(DIAGNOSIS_QUESTIONS.length, prev + 1),
+                            )
+                          }
+                        >
+                          Próximo
+                        </button>
+                      </div>
+                    </>
+                  );
+                })()
+              )}
             </article>
           )}
 
@@ -729,7 +965,14 @@ export default function MarketingPage() {
                     name="competitors"
                     required
                     minLength={2}
-                    defaultValue={disc.competitors}
+                    value={discoveryDraft.competitors}
+                    onChange={(e) => {
+                      setDiscoveryDirty(true);
+                      setDiscoveryDraft((prev) => ({
+                        ...prev,
+                        competitors: e.target.value,
+                      }));
+                    }}
                   />
                 </label>
                 <label>
@@ -738,7 +981,14 @@ export default function MarketingPage() {
                     name="differentiators"
                     required
                     minLength={2}
-                    defaultValue={disc.differentiators}
+                    value={discoveryDraft.differentiators}
+                    onChange={(e) => {
+                      setDiscoveryDirty(true);
+                      setDiscoveryDraft((prev) => ({
+                        ...prev,
+                        differentiators: e.target.value,
+                      }));
+                    }}
                   />
                 </label>
                 <label>
@@ -747,7 +997,14 @@ export default function MarketingPage() {
                     name="ideal_customer"
                     required
                     minLength={2}
-                    defaultValue={disc.ideal_customer}
+                    value={discoveryDraft.ideal_customer}
+                    onChange={(e) => {
+                      setDiscoveryDirty(true);
+                      setDiscoveryDraft((prev) => ({
+                        ...prev,
+                        ideal_customer: e.target.value,
+                      }));
+                    }}
                   />
                 </label>
                 <label>
@@ -756,15 +1013,29 @@ export default function MarketingPage() {
                     name="mission_values"
                     required
                     minLength={2}
-                    defaultValue={disc.mission_values}
+                    value={discoveryDraft.mission_values}
+                    onChange={(e) => {
+                      setDiscoveryDirty(true);
+                      setDiscoveryDraft((prev) => ({
+                        ...prev,
+                        mission_values: e.target.value,
+                      }));
+                    }}
                   />
                 </label>
                 <label>
                   O que a marca deve evitar (complementa o kit)
                   <textarea
                     name="brand_avoid"
-                    defaultValue={brandAvoidDefault}
+                    value={discoveryDraft.brand_avoid}
                     placeholder="Já vem do kit se estiver preenchido"
+                    onChange={(e) => {
+                      setDiscoveryDirty(true);
+                      setDiscoveryDraft((prev) => ({
+                        ...prev,
+                        brand_avoid: e.target.value,
+                      }));
+                    }}
                   />
                 </label>
                 <label>
@@ -773,12 +1044,29 @@ export default function MarketingPage() {
                     name="lead_capacity"
                     required
                     minLength={1}
-                    defaultValue={disc.lead_capacity}
+                    value={discoveryDraft.lead_capacity}
+                    onChange={(e) => {
+                      setDiscoveryDirty(true);
+                      setDiscoveryDraft((prev) => ({
+                        ...prev,
+                        lead_capacity: e.target.value,
+                      }));
+                    }}
                   />
                 </label>
                 <label>
                   Sazonalidade
-                  <input name="seasonality" defaultValue={disc.seasonality} />
+                  <input
+                    name="seasonality"
+                    value={discoveryDraft.seasonality}
+                    onChange={(e) => {
+                      setDiscoveryDirty(true);
+                      setDiscoveryDraft((prev) => ({
+                        ...prev,
+                        seasonality: e.target.value,
+                      }));
+                    }}
+                  />
                 </label>
                 <label>
                   Orçamento mensal
@@ -786,7 +1074,14 @@ export default function MarketingPage() {
                     name="monthly_budget"
                     required
                     minLength={1}
-                    defaultValue={disc.monthly_budget}
+                    value={discoveryDraft.monthly_budget}
+                    onChange={(e) => {
+                      setDiscoveryDirty(true);
+                      setDiscoveryDraft((prev) => ({
+                        ...prev,
+                        monthly_budget: e.target.value,
+                      }));
+                    }}
                   />
                 </label>
                 <button className="primary" disabled={busy}>
