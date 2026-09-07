@@ -5,15 +5,22 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { apiJson } from "../../../lib/api";
 import type { LlmSettings } from "../../../lib/types";
 
-// Modelos descontinuados pela Groq em 16/08/2026
-const DEPRECATED_GROQ_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+type ProviderModel = { id: string; label: string };
+type Provider = {
+  id: string;
+  name: string;
+  blurb: string;
+  models: ProviderModel[];
+  keyUrl?: string;
+  warning?: string;
+  isHosted?: boolean;
+};
 
-const PROVIDERS = [
+const PROVIDERS: Provider[] = [
   {
     id: "operai",
     name: "OperAI (Modo Fácil)",
     blurb: "Use a IA da OperAI — sem precisar criar conta em outro site. Recomendado para começar rapidamente.",
-    keyUrl: null,
     isHosted: true,
     models: [
       { id: "gpt-oss-120b", label: "GPT OSS 120B (recomendado)" },
@@ -53,7 +60,7 @@ const PROVIDERS = [
       { id: "google/gemini-2.0-flash-001", label: "Gemini Flash" },
     ],
   },
-] as const;
+];
 
 export default function LlmSettingsPage() {
   const [settings, setSettings] = useState<LlmSettings | null>(null);
@@ -102,12 +109,17 @@ export default function LlmSettingsPage() {
     const form = event.currentTarget;
     const data = Object.fromEntries(new FormData(form));
     try {
+      const payload: Record<string, unknown> = {
+        provider: data.provider,
+        model_name: data.model,
+      };
+      if (data.provider !== "operai") {
+        payload.api_key = data.api_key;
+      }
       const updated = await apiJson<LlmSettings>("/api/v1/settings/llm", {
         method: "PUT",
         body: JSON.stringify({
-          provider: data.provider,
-          model_name: data.model,
-          api_key: data.api_key,
+          ...payload,
         }),
       });
       setSettings(updated);
@@ -119,7 +131,6 @@ export default function LlmSettingsPage() {
       await load();
     } catch (e) {
       const errorMsg = (e as Error).message;
-      // Traduzir erros técnicos comuns para português simples
       let userFriendlyError = errorMsg;
       
       if (errorMsg.includes("Invalid API Key") || errorMsg.includes("invalid_api_key")) {
