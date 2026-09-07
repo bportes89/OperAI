@@ -1,6 +1,6 @@
 from datetime import UTC,date,datetime,timedelta
 from typing import Annotated,Any
-import hmac,secrets,uuid
+import hmac,re,secrets,uuid
 from fastapi import APIRouter,Depends,File,Form,Header,HTTPException,Request,UploadFile
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import and_,select
@@ -42,6 +42,12 @@ def split_content(value:str,size:int=900,overlap:int=120)->list[str]:
         if end>=len(clean):break
         start=max(end-overlap,start+1)
     return chunks
+
+def _sanitize_marketing_copy(text:str)->str:
+    t=(text or "").strip()
+    if not t:return ""
+    t=re.sub(r"(?im)\bCTA\s*:\s*","Próximo passo: ",t)
+    return t.strip()
 
 def parse_uuid(value:str,label:str="Resource")->uuid.UUID:
     try:return uuid.UUID(value)
@@ -1836,13 +1842,13 @@ async def generate_marketing_playbook(p:Annotated[Principal,Depends(require_role
                     bits=[b.strip() for b in line.split("|")]
                     if len(bits)>=4:
                         ch=_normalize_campaign_channel(bits[1])
-                        parsed.append({"title":bits[0][:180],"channel":ch,"audience":bits[2][:240],"content":"|".join(bits[3:])[:12000]})
+                        parsed.append({"title":bits[0][:180],"channel":ch,"audience":bits[2][:240],"content":_sanitize_marketing_copy("|".join(bits[3:])[:12000])})
                 if len(parsed)>=2:posts=parsed[:4]
     elif mode.startswith("byok") and answer.strip():
         plan=answer
     item.diagnosis_summary=summary
     item.action_plan=plan
-    item.posts=posts
+    item.posts=[{**p,"content":_sanitize_marketing_copy(str(p.get("content") or ""))} for p in posts]
     item.step="active"
     item.updated_at=datetime.now(UTC)
     db.add(AgentTask(
@@ -1885,7 +1891,7 @@ async def regenerate_marketing_post(post_index:int,p:Annotated[Principal,Depends
         "title":str(current.get("title") or "Peça")[:180],
         "channel":_normalize_campaign_channel(ch),
         "audience":str(current.get("audience") or "público-alvo")[:240],
-        "content":str(current.get("content") or "")[:12000],
+        "content":_sanitize_marketing_copy(str(current.get("content") or "")[:12000]),
     }
     line=next((ln.strip() for ln in answer.splitlines() if "|" in ln),answer.strip())
     if "|" in line:
@@ -1895,12 +1901,12 @@ async def regenerate_marketing_post(post_index:int,p:Annotated[Principal,Depends
                 "title":bits[0][:180] or updated["title"],
                 "channel":_normalize_campaign_channel(bits[1] or ch),
                 "audience":bits[2][:240] or updated["audience"],
-                "content":"|".join(bits[3:])[:12000] or updated["content"],
+                "content":_sanitize_marketing_copy("|".join(bits[3:])[:12000] or updated["content"]),
             }
         elif mode.startswith("byok") and answer.strip():
-            updated["content"]=answer.strip()[:12000]
+            updated["content"]=_sanitize_marketing_copy(answer.strip()[:12000])
     elif mode.startswith("byok") and answer.strip():
-        updated["content"]=answer.strip()[:12000]
+        updated["content"]=_sanitize_marketing_copy(answer.strip()[:12000])
     posts[post_index]=updated
     item.posts=posts
     item.updated_at=datetime.now(UTC)
@@ -1923,7 +1929,7 @@ async def materialize_marketing_posts(p:Annotated[Principal,Depends(require_role
             name=str(post.get("title") or "Peça Essencial")[:180],
             channel=ch,
             audience=str(post.get("audience") or "público-alvo")[:240],
-            content=str(post.get("content") or "")[:12000],
+            content=_sanitize_marketing_copy(str(post.get("content") or "")[:12000]),
             status="draft",
         )
         db.add(campaign);created.append(campaign)
